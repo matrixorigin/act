@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
+	"strconv"
+	"time"
 
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/exprparser"
@@ -112,6 +115,15 @@ func newDispatchedJobExecutor(dispatcher JobDispatcher, info jobInfo, rc *RunCon
 		if len(info.matrix()) > 0 {
 			common.Logger(ctx).Infof("\U0001F9EA  Matrix: %v", info.matrix())
 		}
+		timeout, err := dispatchedJobTimeout(ctx, rc)
+		if err != nil {
+			return err
+		}
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 		result, err := dispatcher.DispatchJob(ctx, rc)
 		success := false
 		if err == nil {
@@ -146,4 +158,17 @@ func newDispatchedJobExecutor(dispatcher JobDispatcher, info jobInfo, rc *RunCon
 		setJobOutputs(ctx, rc)
 		return err
 	}
+}
+
+func dispatchedJobTimeout(ctx context.Context, rc *RunContext) (time.Duration, error) {
+	raw := rc.Run.Job().TimeoutMinutes
+	if raw == "" {
+		return 0, nil
+	}
+	value := rc.NewExpressionEvaluator(ctx).Interpolate(ctx, raw)
+	minutes, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || minutes <= 0 || minutes > math.MaxInt64/int64(time.Minute) {
+		return 0, fmt.Errorf("remote Job timeout-minutes must resolve to a positive integer: %q", raw)
+	}
+	return time.Duration(minutes) * time.Minute, nil
 }

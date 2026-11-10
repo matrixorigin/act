@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nektos/act/pkg/model"
 	assert "github.com/stretchr/testify/assert"
@@ -90,6 +91,21 @@ func TestDispatchedJobExecutorContinueOnError(t *testing.T) {
 				assert.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestDispatchedJobTimeout(t *testing.T) {
+	workflow := &model.Workflow{Jobs: map[string]*model.Job{
+		"build": {TimeoutMinutes: "${{ 5 }}", Steps: []*model.Step{{Run: "echo remote"}}},
+	}}
+	rc := &RunContext{Run: &model.Run{Workflow: workflow, JobID: "build"}, Config: &Config{}}
+	timeout, err := dispatchedJobTimeout(t.Context(), rc)
+	assert.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, timeout)
+	for _, raw := range []string{"0", "-1", "invalid", "${{ missing.function() }}"} {
+		rc.Run.Job().TimeoutMinutes = raw
+		_, err = dispatchedJobTimeout(t.Context(), rc)
+		assert.Error(t, err, raw)
 	}
 }
 
