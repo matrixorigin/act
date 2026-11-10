@@ -214,6 +214,61 @@ jobs:
 	assert.Equal(t, []string{"linux", "windows"}, observed)
 }
 
+func TestJobInvocationPathProvidesReusableWorkflowPermissions(t *testing.T) {
+	readWorkflow := func(source string) *model.Workflow {
+		workflow, err := model.ReadWorkflow(strings.NewReader(source), false)
+		if !assert.NoError(t, err) {
+			t.FailNow()
+		}
+		return workflow
+	}
+	rootWorkflow := readWorkflow(`permissions: {id-token: write, contents: read}
+jobs:
+  call:
+    uses: ./.github/workflows/called.yml
+`)
+	calledWorkflow := readWorkflow(`permissions: {id-token: write}
+jobs:
+  call_deep:
+    permissions: {contents: read}
+    uses: ./.github/workflows/deep.yml
+`)
+	deepWorkflow := readWorkflow(`permissions: {id-token: none}
+jobs:
+  build:
+    permissions: {id-token: write}
+    runs-on: self-hosted
+    steps:
+      - run: echo deep
+`)
+	root := &RunContext{Run: &model.Run{Workflow: rootWorkflow, JobID: "call"}}
+	called := &RunContext{Run: &model.Run{Workflow: calledWorkflow, JobID: "call_deep"}, caller: &caller{runContext: root}}
+	deep := &RunContext{Run: &model.Run{Workflow: deepWorkflow, JobID: "build"}, caller: &caller{runContext: called}}
+
+	path, err := deep.JobInvocationPathWithConcurrency(t.Context())
+	assert.NoError(t, err)
+	if assert.Len(t, path, 3) {
+		permission := func(node yaml.Node, name string) string {
+			for index := 0; index < len(node.Content); index += 2 {
+				if node.Content[index].Value == name {
+					return node.Content[index+1].Value
+				}
+			}
+			return ""
+		}
+		assert.Equal(t, "write", permission(path[0].Permissions, "id-token"), "caller Job inherits Workflow permissions")
+		assert.Empty(t, permission(path[1].Permissions, "id-token"), "caller Job overrides Workflow permissions")
+		assert.Equal(t, "read", permission(path[1].Permissions, "contents"))
+		assert.Equal(t, "write", permission(path[2].Permissions, "id-token"), "leaf Job overrides Workflow permissions")
+	}
+	plain := deep.JobInvocationPath()
+	if assert.Len(t, plain, 3) && assert.Len(t, path, 3) {
+		for index := range path {
+			assert.Equal(t, path[index].Permissions, plain[index].Permissions)
+		}
+	}
+}
+
 func TestWorkflowAdmissionIncludesReusableWorkflows(t *testing.T) {
 	directory := t.TempDir()
 	assert.NoError(t, os.MkdirAll(filepath.Join(directory, ".github", "workflows"), 0o700))

@@ -52,6 +52,7 @@ type JobInvocation struct {
 	Workflow            string
 	JobID               string
 	Matrix              map[string]any
+	Permissions         yaml.Node `json:"-"`
 	WorkflowConcurrency *ConcurrencySpec
 	JobConcurrency      *ConcurrencySpec
 }
@@ -66,17 +67,14 @@ type ConcurrencySpec struct {
 
 // JobInvocationPath returns the outer-to-inner reusable-workflow call chain,
 // including rc itself. Callers can combine this path with their run/attempt ID
-// to resume a dispatched Job without duplicating it. Returned matrices must be
-// treated as immutable.
+// to resume a dispatched Job without duplicating it. Returned matrices and
+// permission nodes must be treated as immutable. Permissions is the effective
+// Job-over-Workflow declaration at each reusable-workflow boundary.
 func (rc *RunContext) JobInvocationPath() []JobInvocation {
 	contexts := rc.jobInvocationContexts()
 	path := make([]JobInvocation, 0, len(contexts))
 	for _, current := range contexts {
-		path = append(path, JobInvocation{
-			Workflow: current.Run.Workflow.File,
-			JobID:    current.Run.JobID,
-			Matrix:   maps.Clone(current.Matrix),
-		})
+		path = append(path, current.jobInvocation())
 	}
 	return path
 }
@@ -96,15 +94,20 @@ func (rc *RunContext) JobInvocationPathWithConcurrency(ctx context.Context) ([]J
 		if err != nil {
 			return nil, fmt.Errorf("evaluate Job %q concurrency: %w", current.Run.JobID, err)
 		}
-		path = append(path, JobInvocation{
-			Workflow:            current.Run.Workflow.File,
-			JobID:               current.Run.JobID,
-			Matrix:              maps.Clone(current.Matrix),
-			WorkflowConcurrency: workflowConcurrency,
-			JobConcurrency:      jobConcurrency,
-		})
+		invocation := current.jobInvocation()
+		invocation.WorkflowConcurrency = workflowConcurrency
+		invocation.JobConcurrency = jobConcurrency
+		path = append(path, invocation)
 	}
 	return path, nil
+}
+
+func (rc *RunContext) jobInvocation() JobInvocation {
+	permissions := rc.Run.Job().RawPermissions
+	if permissions.Kind == 0 {
+		permissions = rc.Run.Workflow.RawPermissions
+	}
+	return JobInvocation{Workflow: rc.Run.Workflow.File, JobID: rc.Run.JobID, Matrix: maps.Clone(rc.Matrix), Permissions: permissions}
 }
 
 func (rc *RunContext) jobInvocationContexts() []*RunContext {
