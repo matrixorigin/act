@@ -103,11 +103,16 @@ func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext
 	// webhook payload. Never export act's process-local paths.
 	github.EventPath = ""
 	github.Workspace = ""
+	vars := maps.Clone(getWorkflowVars(ctx, rc))
+	// External executors serialize Vars as a ContextData dictionary, not null.
+	if vars == nil {
+		vars = map[string]string{}
+	}
 	return JobDispatchContext{
 		GitHub:  github,
 		Inputs:  getEvaluatorInputs(ctx, rc, nil, github),
 		Secrets: maps.Clone(getWorkflowSecrets(ctx, rc)),
-		Vars:    maps.Clone(getWorkflowVars(ctx, rc)),
+		Vars:    vars,
 		Env:     env,
 	}
 }

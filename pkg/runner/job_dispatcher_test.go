@@ -226,6 +226,8 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	assert.NotContains(t, dispatch.Env, "SHA_REF")
 	assert.Equal(t, "0123456789abcdef", dispatch.Env["FROZEN"])
 	assert.NotContains(t, dispatch.Env, "ACT")
+	assert.NotNil(t, dispatch.Vars)
+	assert.Empty(t, dispatch.Vars)
 	assert.Equal(t, "true", rc.GetEnv()["ACT"])
 	assert.Equal(t, "config", rc.GetEnv()["CONFIG_VALUE"])
 	assert.Empty(t, dispatch.GitHub.EventPath)
