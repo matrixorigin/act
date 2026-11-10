@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/nektos/act/pkg/common"
+	"github.com/nektos/act/pkg/model"
 )
 
 // JobConclusion is the durable outcome of a remotely dispatched Job.
@@ -69,6 +70,29 @@ func (rc *RunContext) JobInvocationPath() []JobInvocation {
 	}
 	slices.Reverse(path)
 	return path
+}
+
+// JobDispatchContext contains the act-evaluated context needed by an external
+// executor. GitHub.Token and Secrets are sensitive and must only be used at the
+// executor's credential-delivery boundary. All returned values must be treated
+// as immutable for the duration of DispatchJob.
+type JobDispatchContext struct {
+	GitHub  *model.GithubContext
+	Inputs  map[string]any
+	Secrets map[string]string
+	Vars    map[string]string
+}
+
+// JobDispatchContext resolves the same expression contexts act uses for the
+// current Job, including inputs and secrets inherited through reusable calls.
+func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext {
+	github := rc.getGithubContext(ctx)
+	return JobDispatchContext{
+		GitHub:  github,
+		Inputs:  getEvaluatorInputs(ctx, rc, nil, github),
+		Secrets: maps.Clone(getWorkflowSecrets(ctx, rc)),
+		Vars:    maps.Clone(getWorkflowVars(ctx, rc)),
+	}
 }
 
 func newDispatchedJobExecutor(dispatcher JobDispatcher, info jobInfo, rc *RunContext) common.Executor {
