@@ -90,10 +90,11 @@ type JobDispatchContext struct {
 
 // JobDispatchContext resolves the same expression contexts act uses for the
 // current Job, including inputs and secrets inherited through reusable calls.
+// Env contains only Workflow and Job env. Config.Env belongs to act's local
+// process and must not leak into an external Runner's workflow env context.
 func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext {
 	github := rc.getGithubContext(ctx)
-	env := maps.Clone(rc.GetEnv())
-	delete(env, "ACT")
+	env := mergeMaps(rc.Run.Workflow.Env, rc.Run.Job().Environment())
 	evaluator := rc.NewExpressionEvaluator(ctx)
 	for name, value := range env {
 		env[name] = evaluator.Interpolate(ctx, value)

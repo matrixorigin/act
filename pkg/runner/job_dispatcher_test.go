@@ -213,15 +213,17 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	}
 	rc := &RunContext{
 		Run:    &model.Run{Workflow: workflow, JobID: "build"},
-		Config: &Config{Env: map[string]string{"CONFIG_VALUE": "config", "SHA_REF": "0123456789abcdef"}, EventName: "push"},
+		Config: &Config{Env: map[string]string{"CONFIG_VALUE": "config", "WORKFLOW_VALUE": "config-override", "SHA_REF": "0123456789abcdef"}, EventName: "push"},
 	}
 
 	dispatch := rc.JobDispatchContext(t.Context())
 
 	assert.Equal(t, "workflow", dispatch.Env["WORKFLOW_VALUE"])
 	assert.Equal(t, "job", dispatch.Env["JOB_VALUE"])
-	assert.Equal(t, "config", dispatch.Env["CONFIG_VALUE"])
+	assert.NotContains(t, dispatch.Env, "CONFIG_VALUE")
+	assert.NotContains(t, dispatch.Env, "SHA_REF")
 	assert.Equal(t, "0123456789abcdef", dispatch.Env["FROZEN"])
 	assert.NotContains(t, dispatch.Env, "ACT")
 	assert.Equal(t, "true", rc.GetEnv()["ACT"])
+	assert.Equal(t, "config", rc.GetEnv()["CONFIG_VALUE"])
 }
