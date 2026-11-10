@@ -225,15 +225,22 @@ jobs:
 `)
 	called := []byte(`name: called
 on: workflow_call
-concurrency: called-group
+jobs:
+  call_deep:
+    uses: ./.github/workflows/deep.yml
+`)
+	deep := []byte(`name: deep
+on: workflow_call
+concurrency: deep-group
 jobs:
   build:
     runs-on: self-hosted
     steps:
-      - run: echo remote
+      - run: echo deep
 `)
 	assert.NoError(t, os.WriteFile(filepath.Join(directory, "caller.yml"), caller, 0o600))
 	assert.NoError(t, os.WriteFile(filepath.Join(directory, ".github", "workflows", "called.yml"), called, 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, ".github", "workflows", "deep.yml"), deep, 0o600))
 	planner, err := model.NewWorkflowPlanner(filepath.Join(directory, "caller.yml"), true, false)
 	assert.NoError(t, err)
 	plan, err := planner.PlanEvent("push")
@@ -264,7 +271,7 @@ jobs:
 	err = runner.NewPlanExecutor(plan)(t.Context())
 
 	assert.ErrorIs(t, err, admissionErr)
-	assert.Equal(t, []string{"caller", "called"}, admitted)
+	assert.Equal(t, []string{"caller", "called", "deep"}, admitted)
 	assert.Zero(t, dispatchCalls)
 }
 
