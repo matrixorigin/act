@@ -101,3 +101,16 @@ jobs:
 		})
 	}
 }
+
+func TestRemoteReusableWorkflowCanBeDisabled(t *testing.T) {
+	rc := &RunContext{
+		Config: &Config{DisableRemoteReusableWorkflows: true},
+		Run: &model.Run{JobID: "call", Workflow: &model.Workflow{Jobs: map[string]*model.Job{
+			"call": {Uses: "org/repo/.github/workflows/called.yml@main"},
+		}}},
+	}
+
+	err := newRemoteReusableWorkflowExecutor(rc)(t.Context())
+
+	require.ErrorContains(t, err, "remote reusable workflows are disabled")
+}
