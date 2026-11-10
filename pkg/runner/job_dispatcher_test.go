@@ -483,14 +483,22 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	assert.NoError(t, jobEnv.Encode(map[string]string{"JOB_VALUE": "job"}))
 	workflow := &model.Workflow{
 		File: "remote.yml",
-		Env:  map[string]string{"WORKFLOW_VALUE": "workflow", "FROZEN": "${{ github.sha }}"},
+		Env: map[string]string{
+			"WORKFLOW_VALUE": "workflow", "FROZEN": "${{ github.sha }}",
+			"CONFIG_REFERENCE": "${{ env.CONFIG_VALUE }}", "ACT_REFERENCE": "${{ env.ACT }}",
+			"WORKFLOW_REFERENCE": "${{ env.WORKFLOW_VALUE }}",
+		},
 		Jobs: map[string]*model.Job{
 			"build": {Env: jobEnv, Steps: []*model.Step{{Run: "echo remote"}}},
 		},
 	}
 	rc := &RunContext{
-		Run:          &model.Run{Workflow: workflow, JobID: "build"},
-		Config:       &Config{Env: map[string]string{"CONFIG_VALUE": "config", "WORKFLOW_VALUE": "config-override", "SHA_REF": "0123456789abcdef", "GITHUB_WORKSPACE": "/act/workspace"}, EventName: "push", Workdir: "/work"},
+		Run: &model.Run{Workflow: workflow, JobID: "build"},
+		Config: &Config{
+			Env:       map[string]string{"CONFIG_VALUE": "config", "WORKFLOW_VALUE": "config-override", "SHA_REF": "0123456789abcdef", "GITHUB_WORKSPACE": "/act/workspace"},
+			EventName: "push", Workdir: "/work",
+			JobDispatcher: JobDispatcherFunc(func(context.Context, *RunContext) (JobResult, error) { return JobResult{}, nil }),
+		},
 		JobContainer: &container.HostEnvironment{ActPath: "/act", Workdir: "/work", Path: "/container"},
 	}
 
@@ -501,7 +509,14 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	assert.NotContains(t, dispatch.Env, "CONFIG_VALUE")
 	assert.NotContains(t, dispatch.Env, "SHA_REF")
 	assert.Equal(t, "0123456789abcdef", dispatch.Env["FROZEN"])
+	assert.Empty(t, dispatch.Env["CONFIG_REFERENCE"])
+	assert.Empty(t, dispatch.Env["ACT_REFERENCE"])
+	assert.Equal(t, "workflow", dispatch.Env["WORKFLOW_REFERENCE"])
 	assert.NotContains(t, dispatch.Env, "ACT")
+	evaluator := rc.NewExpressionEvaluator(t.Context())
+	assert.Empty(t, evaluator.Interpolate(t.Context(), "${{ env.CONFIG_VALUE }}"))
+	assert.Empty(t, evaluator.Interpolate(t.Context(), "${{ env.ACT }}"))
+	assert.Equal(t, "workflow", evaluator.Interpolate(t.Context(), "${{ env.WORKFLOW_VALUE }}"))
 	assert.NotNil(t, dispatch.Vars)
 	assert.Empty(t, dispatch.Vars)
 	assert.Equal(t, "true", rc.GetEnv()["ACT"])

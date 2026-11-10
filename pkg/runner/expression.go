@@ -29,6 +29,16 @@ type ExpressionEvaluator interface {
 
 // NewExpressionEvaluator creates a new evaluator
 func (rc *RunContext) NewExpressionEvaluator(ctx context.Context) ExpressionEvaluator {
+	if rc.Config != nil && rc.Config.JobDispatcher != nil && rc.Run != nil && rc.Run.Workflow != nil {
+		// Remote Jobs use GitHub's env context: only Workflow and Job declarations.
+		// Config.Env contains act process settings and ACT is local-only; neither
+		// may affect remote scheduling or dispatch interpolation.
+		env := mergeMaps(rc.Run.Workflow.Env)
+		if job := rc.Run.Job(); job != nil {
+			env = mergeMaps(env, job.Environment())
+		}
+		return rc.NewExpressionEvaluatorWithEnv(ctx, env)
+	}
 	return rc.NewExpressionEvaluatorWithEnv(ctx, rc.GetEnv())
 }
 

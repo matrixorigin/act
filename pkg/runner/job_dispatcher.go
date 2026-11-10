@@ -103,7 +103,10 @@ func (rc *RunContext) JobInvocationPathWithConcurrency(ctx context.Context) ([]J
 }
 
 func (rc *RunContext) jobInvocation() JobInvocation {
-	permissions := rc.Run.Job().RawPermissions
+	var permissions yaml.Node
+	if job := rc.Run.Job(); job != nil {
+		permissions = job.RawPermissions
+	}
 	if permissions.Kind == 0 {
 		permissions = rc.Run.Workflow.RawPermissions
 	}
