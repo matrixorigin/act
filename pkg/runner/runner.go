@@ -192,7 +192,7 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 				}
 
 				for i, matrix := range matrixes {
-					rc := runner.newRunContext(ctx, run, matrix)
+					rc := runner.newRunContextWithStrategy(ctx, run, matrix, map[string]any{"job-index": i, "job-total": len(matrixes)})
 					rc.JobName = rc.Name
 					if len(matrixes) > 1 {
 						rc.Name = fmt.Sprintf("%s-%d", rc.Name, i+1)
@@ -255,12 +255,17 @@ func selectMatrixes(originalMatrixes []map[string]interface{}, targetMatrixValue
 }
 
 func (runner *runnerImpl) newRunContext(ctx context.Context, run *model.Run, matrix map[string]interface{}) *RunContext {
+	return runner.newRunContextWithStrategy(ctx, run, matrix, nil)
+}
+
+func (runner *runnerImpl) newRunContextWithStrategy(ctx context.Context, run *model.Run, matrix map[string]interface{}, strategy map[string]any) *RunContext {
 	rc := &RunContext{
 		Config:      runner.config,
 		Run:         run,
 		EventJSON:   runner.eventJSON,
 		StepResults: make(map[string]*model.StepResult),
 		Matrix:      matrix,
+		Strategy:    strategy,
 		caller:      runner.caller,
 	}
 	rc.ExprEval = rc.NewExpressionEvaluator(ctx)

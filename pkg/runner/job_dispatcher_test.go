@@ -152,6 +152,68 @@ jobs:
 	assert.Equal(t, []string{"first", "second"}, calls)
 }
 
+func TestJobDispatcherProvidesMatrixStrategy(t *testing.T) {
+	directory := t.TempDir()
+	workflow := []byte(`name: remote matrix
+on: push
+jobs:
+  build:
+    name: Build ${{ strategy.job-index }}
+    runs-on: self-hosted
+    strategy:
+      max-parallel: 1
+      matrix:
+        os: [linux, windows]
+    env:
+      JOB_INDEX: ${{ strategy.job-index }}
+      JOB_TOTAL: ${{ strategy.job-total }}
+    steps:
+      - run: echo remote
+`)
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, "matrix.yml"), workflow, 0o600))
+	planner, err := model.NewWorkflowPlanner(directory, true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	type expectation struct {
+		index int
+		env   string
+		name  string
+	}
+	expectations := map[string]expectation{
+		"linux": {index: 0, env: "0", name: "Build 0-1"}, "windows": {index: 1, env: "1", name: "Build 1-2"},
+	}
+	var observed []string
+	dispatcher := JobDispatcherFunc(func(ctx context.Context, rc *RunContext) (JobResult, error) {
+		osName := rc.Matrix["os"].(string)
+		expected, ok := expectations[osName]
+		assert.True(t, ok, osName)
+		assert.Equal(t, expected.name, rc.Name)
+		dispatch := rc.JobDispatchContext(ctx)
+		assert.Equal(t, expected.index, dispatch.Strategy["job-index"])
+		assert.Equal(t, 2, dispatch.Strategy["job-total"])
+		assert.Equal(t, true, dispatch.Strategy["fail-fast"])
+		assert.Equal(t, 1, dispatch.Strategy["max-parallel"])
+		assert.Equal(t, expected.env, dispatch.Env["JOB_INDEX"])
+		assert.Equal(t, "2", dispatch.Env["JOB_TOTAL"])
+		observed = append(observed, osName)
+		return JobResult{Conclusion: JobConclusionSuccess}, nil
+	})
+	runner, err := New(&Config{
+		Workdir: directory, EventName: "push", GitHubInstance: "github.com", RemoteName: "origin", JobDispatcher: dispatcher,
+		Env: map[string]string{
+			"GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/dev", "SHA_REF": "0123456789abcdef0123456789abcdef01234567",
+		},
+	})
+	assert.NoError(t, err)
+
+	err = runner.NewPlanExecutor(plan)(t.Context())
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"linux", "windows"}, observed)
+}
+
 func TestJobDispatcherPreservesDeploymentEnvironment(t *testing.T) {
 	workflow, err := model.ReadWorkflow(strings.NewReader(`name: environment
 on: push

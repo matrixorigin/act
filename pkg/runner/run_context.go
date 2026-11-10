@@ -33,9 +33,11 @@ import (
 
 // RunContext contains info about current job
 type RunContext struct {
-	Name                string
-	Config              *Config
-	Matrix              map[string]interface{}
+	Name   string
+	Config *Config
+	Matrix map[string]interface{}
+	// Strategy contains the fully expanded values for this matrix invocation.
+	Strategy            map[string]any
 	Run                 *model.Run
 	EventJSON           string
 	Env                 map[string]string

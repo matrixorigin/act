@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"path"
 	"reflect"
 	"regexp"
@@ -31,19 +32,25 @@ func (rc *RunContext) NewExpressionEvaluator(ctx context.Context) ExpressionEval
 	return rc.NewExpressionEvaluatorWithEnv(ctx, rc.GetEnv())
 }
 
+func (rc *RunContext) jobStrategy() map[string]any {
+	strategy := map[string]any{}
+	if rc.Run != nil {
+		if job := rc.Run.Job(); job != nil && job.Strategy != nil {
+			strategy["fail-fast"] = job.Strategy.GetFailFast()
+			strategy["max-parallel"] = job.Strategy.GetMaxParallel()
+		}
+	}
+	maps.Copy(strategy, rc.Strategy)
+	return strategy
+}
+
 func (rc *RunContext) NewExpressionEvaluatorWithEnv(ctx context.Context, env map[string]string) ExpressionEvaluator {
 	var workflowCallResult map[string]*model.WorkflowCallResult
 
 	// todo: cleanup EvaluationEnvironment creation
 	using := make(map[string]exprparser.Needs)
-	strategy := make(map[string]interface{})
+	strategy := rc.jobStrategy()
 	if rc.Run != nil {
-		job := rc.Run.Job()
-		if job != nil && job.Strategy != nil {
-			strategy["fail-fast"] = job.Strategy.FailFast
-			strategy["max-parallel"] = job.Strategy.MaxParallel
-		}
-
 		jobs := rc.Run.Workflow.Jobs
 		jobNeeds := rc.Run.Job().Needs()
 

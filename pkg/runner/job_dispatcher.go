@@ -86,6 +86,8 @@ type JobDispatchContext struct {
 	Secrets map[string]string
 	Vars    map[string]string
 	Env     map[string]string
+	// Strategy contains the same expanded values used by act's evaluator.
+	Strategy map[string]any
 }
 
 // JobDispatchContext resolves the same expression contexts act uses for the
@@ -109,11 +111,12 @@ func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext
 		vars = map[string]string{}
 	}
 	return JobDispatchContext{
-		GitHub:  github,
-		Inputs:  getEvaluatorInputs(ctx, rc, nil, github),
-		Secrets: maps.Clone(getWorkflowSecrets(ctx, rc)),
-		Vars:    vars,
-		Env:     env,
+		GitHub:   github,
+		Inputs:   getEvaluatorInputs(ctx, rc, nil, github),
+		Secrets:  maps.Clone(getWorkflowSecrets(ctx, rc)),
+		Vars:     vars,
+		Env:      env,
+		Strategy: rc.jobStrategy(),
 	}
 }
 
