@@ -163,8 +163,14 @@ type WorkflowCallOutput struct {
 	Value       string `yaml:"value"`
 }
 
+type WorkflowCallSecret struct {
+	Description string `yaml:"description"`
+	Required    bool   `yaml:"required"`
+}
+
 type WorkflowCall struct {
 	Inputs  map[string]WorkflowCallInput  `yaml:"inputs"`
+	Secrets map[string]WorkflowCallSecret `yaml:"secrets"`
 	Outputs map[string]WorkflowCallOutput `yaml:"outputs"`
 }
 

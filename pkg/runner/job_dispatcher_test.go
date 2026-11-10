@@ -117,6 +117,21 @@ jobs:
 	assert.Equal(t, "production", workflow.GetJob("deploy").RawEnvironment.Value)
 }
 
+func TestWorkflowCallConfigPreservesSecrets(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`on:
+  workflow_call:
+    secrets:
+      DEPLOY_TOKEN:
+        required: true
+jobs: {}
+`), false)
+	assert.NoError(t, err)
+	call := workflow.WorkflowCallConfig()
+	if assert.NotNil(t, call) {
+		assert.True(t, call.Secrets["DEPLOY_TOKEN"].Required)
+	}
+}
+
 func TestJobInvocationPath(t *testing.T) {
 	root := &RunContext{
 		Run:    &model.Run{Workflow: &model.Workflow{File: "root.yml"}, JobID: "call"},
