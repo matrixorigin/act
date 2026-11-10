@@ -99,6 +99,10 @@ func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext
 	for name, value := range env {
 		env[name] = evaluator.Interpolate(ctx, value)
 	}
+	// The external executor owns its local workspace and materializes the
+	// webhook payload. Never export act's process-local paths.
+	github.EventPath = ""
+	github.Workspace = ""
 	return JobDispatchContext{
 		GitHub:  github,
 		Inputs:  getEvaluatorInputs(ctx, rc, nil, github),

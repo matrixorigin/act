@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nektos/act/pkg/container"
 	"github.com/nektos/act/pkg/model"
 	assert "github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
@@ -212,8 +213,9 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 		},
 	}
 	rc := &RunContext{
-		Run:    &model.Run{Workflow: workflow, JobID: "build"},
-		Config: &Config{Env: map[string]string{"CONFIG_VALUE": "config", "WORKFLOW_VALUE": "config-override", "SHA_REF": "0123456789abcdef"}, EventName: "push"},
+		Run:          &model.Run{Workflow: workflow, JobID: "build"},
+		Config:       &Config{Env: map[string]string{"CONFIG_VALUE": "config", "WORKFLOW_VALUE": "config-override", "SHA_REF": "0123456789abcdef", "GITHUB_WORKSPACE": "/act/workspace"}, EventName: "push", Workdir: "/work"},
+		JobContainer: &container.HostEnvironment{ActPath: "/act", Workdir: "/work", Path: "/container"},
 	}
 
 	dispatch := rc.JobDispatchContext(t.Context())
@@ -226,4 +228,6 @@ func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	assert.NotContains(t, dispatch.Env, "ACT")
 	assert.Equal(t, "true", rc.GetEnv()["ACT"])
 	assert.Equal(t, "config", rc.GetEnv()["CONFIG_VALUE"])
+	assert.Empty(t, dispatch.GitHub.EventPath)
+	assert.Empty(t, dispatch.GitHub.Workspace)
 }
