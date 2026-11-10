@@ -1,0 +1,102 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/nektos/act/pkg/model"
+	assert "github.com/stretchr/testify/assert"
+)
+
+func TestDispatchedJobExecutorResult(t *testing.T) {
+	dispatchFailure := errors.New("dispatch failed")
+	tests := []struct {
+		name        string
+		result      JobResult
+		dispatchErr error
+		wantResult  string
+		wantOutputs map[string]string
+		wantErr     error
+		wantErrText string
+	}{
+		{name: "success", result: JobResult{Conclusion: JobConclusionSuccess, Outputs: map[string]string{"value": "remote"}}, wantResult: "success", wantOutputs: map[string]string{"value": "remote"}},
+		{name: "failure", result: JobResult{Conclusion: JobConclusionFailure, Outputs: map[string]string{"value": "partial"}}, wantResult: "failure", wantOutputs: map[string]string{"value": "partial"}},
+		{name: "canceled", result: JobResult{Conclusion: JobConclusionCanceled}, wantResult: "failure", wantOutputs: map[string]string{}, wantErr: context.Canceled},
+		{name: "invalid conclusion", result: JobResult{Conclusion: "skipped"}, wantResult: "failure", wantErrText: "remote Job returned invalid conclusion"},
+		{name: "dispatch error", dispatchErr: dispatchFailure, wantResult: "failure", wantErr: dispatchFailure},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := &model.Workflow{Jobs: map[string]*model.Job{
+				"build": {Outputs: map[string]string{"value": "${{ steps.produce.outputs.value }}"}, Steps: []*model.Step{{Run: "echo remote"}}},
+			}}
+			rc := &RunContext{Run: &model.Run{Workflow: workflow, JobID: "build"}, Config: &Config{}}
+			calls := 0
+			dispatcher := JobDispatcherFunc(func(_ context.Context, got *RunContext) (JobResult, error) {
+				calls++
+				assert.Same(t, rc, got)
+				return test.result, test.dispatchErr
+			})
+
+			err := newDispatchedJobExecutor(dispatcher, rc, rc)(t.Context())
+
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, test.wantResult, rc.Run.Job().Result)
+			if test.wantOutputs != nil {
+				assert.Equal(t, test.wantOutputs, rc.Run.Job().Outputs)
+			}
+			if test.wantErr != nil {
+				assert.ErrorIs(t, err, test.wantErr)
+			} else if test.wantErrText != "" {
+				assert.ErrorContains(t, err, test.wantErrText)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestJobDispatcherRunsPlan(t *testing.T) {
+	directory := t.TempDir()
+	workflow := []byte(`name: remote
+on: push
+jobs:
+  first:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.produce.outputs.value }}
+    steps:
+      - id: produce
+        run: echo "local execution must not happen"
+  second:
+    needs: first
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ needs.first.outputs.value }}"
+`)
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, "push.yml"), workflow, 0o600))
+	planner, err := model.NewWorkflowPlanner(directory, true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	var calls []string
+	dispatcher := JobDispatcherFunc(func(ctx context.Context, rc *RunContext) (JobResult, error) {
+		calls = append(calls, rc.Run.JobID)
+		if rc.Run.JobID == "second" {
+			script := rc.NewExpressionEvaluator(ctx).Interpolate(ctx, rc.Run.Job().Steps[0].Run)
+			assert.Equal(t, `echo "remote"`, script)
+		}
+		return JobResult{Conclusion: JobConclusionSuccess, Outputs: map[string]string{"value": "remote"}}, nil
+	})
+	runner, err := New(&Config{Workdir: directory, EventName: "push", JobDispatcher: dispatcher})
+	assert.NoError(t, err)
+
+	err = runner.NewPlanExecutor(plan)(t.Context())
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"first", "second"}, calls)
+}

@@ -719,7 +719,11 @@ func (rc *RunContext) Executor() (common.Executor, error) {
 
 	switch jobType {
 	case model.JobTypeDefault:
-		executor = newJobExecutor(rc, &stepFactoryImpl{}, rc)
+		if rc.Config != nil && rc.Config.JobDispatcher != nil {
+			executor = newDispatchedJobExecutor(rc.Config.JobDispatcher, rc, rc)
+		} else {
+			executor = newJobExecutor(rc, &stepFactoryImpl{}, rc)
+		}
 	case model.JobTypeReusableWorkflowLocal:
 		executor = newLocalReusableWorkflowExecutor(rc)
 	case model.JobTypeReusableWorkflowRemote:
