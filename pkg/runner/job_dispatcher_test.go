@@ -61,6 +61,38 @@ func TestDispatchedJobExecutorResult(t *testing.T) {
 	}
 }
 
+func TestDispatchedJobExecutorContinueOnError(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		expression string
+		wantResult string
+		wantErr    bool
+	}{
+		{name: "literal", expression: "true", wantResult: "success"},
+		{name: "expression", expression: "${{ true }}", wantResult: "success"},
+		{name: "false", expression: "false", wantResult: "failure"},
+		{name: "invalid", expression: "${{ missing.function() }}", wantResult: "failure", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := &model.Workflow{Jobs: map[string]*model.Job{
+				"build": {RawContinueOnError: test.expression, Steps: []*model.Step{{Run: "echo remote"}}},
+			}}
+			rc := &RunContext{Run: &model.Run{Workflow: workflow, JobID: "build"}, Config: &Config{}}
+			dispatcher := JobDispatcherFunc(func(context.Context, *RunContext) (JobResult, error) {
+				return JobResult{Conclusion: JobConclusionFailure, Outputs: map[string]string{"value": "partial"}}, nil
+			})
+			err := newDispatchedJobExecutor(dispatcher, rc, rc)(t.Context())
+			assert.Equal(t, test.wantResult, rc.Run.Job().Result)
+			assert.Equal(t, map[string]string{"value": "partial"}, rc.Run.Job().Outputs)
+			if test.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestJobDispatcherRunsPlan(t *testing.T) {
 	directory := t.TempDir()
 	workflow := []byte(`name: remote

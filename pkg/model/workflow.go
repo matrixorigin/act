@@ -200,23 +200,24 @@ func (w *Workflow) WorkflowCallConfig() *WorkflowCall {
 
 // Job is the structure of one job in a workflow
 type Job struct {
-	Name           string                    `yaml:"name"`
-	RawNeeds       yaml.Node                 `yaml:"needs"`
-	RawRunsOn      yaml.Node                 `yaml:"runs-on"`
-	RawEnvironment yaml.Node                 `yaml:"environment"`
-	Env            yaml.Node                 `yaml:"env"`
-	If             yaml.Node                 `yaml:"if"`
-	Steps          []*Step                   `yaml:"steps"`
-	TimeoutMinutes string                    `yaml:"timeout-minutes"`
-	Services       map[string]*ContainerSpec `yaml:"services"`
-	Strategy       *Strategy                 `yaml:"strategy"`
-	RawContainer   yaml.Node                 `yaml:"container"`
-	Defaults       Defaults                  `yaml:"defaults"`
-	Outputs        map[string]string         `yaml:"outputs"`
-	Uses           string                    `yaml:"uses"`
-	With           map[string]interface{}    `yaml:"with"`
-	RawSecrets     yaml.Node                 `yaml:"secrets"`
-	Result         string
+	Name               string                    `yaml:"name"`
+	RawNeeds           yaml.Node                 `yaml:"needs"`
+	RawRunsOn          yaml.Node                 `yaml:"runs-on"`
+	RawEnvironment     yaml.Node                 `yaml:"environment"`
+	Env                yaml.Node                 `yaml:"env"`
+	If                 yaml.Node                 `yaml:"if"`
+	Steps              []*Step                   `yaml:"steps"`
+	TimeoutMinutes     string                    `yaml:"timeout-minutes"`
+	RawContinueOnError string                    `yaml:"continue-on-error"`
+	Services           map[string]*ContainerSpec `yaml:"services"`
+	Strategy           *Strategy                 `yaml:"strategy"`
+	RawContainer       yaml.Node                 `yaml:"container"`
+	Defaults           Defaults                  `yaml:"defaults"`
+	Outputs            map[string]string         `yaml:"outputs"`
+	Uses               string                    `yaml:"uses"`
+	With               map[string]interface{}    `yaml:"with"`
+	RawSecrets         yaml.Node                 `yaml:"secrets"`
+	Result             string
 }
 
 // Strategy for the job

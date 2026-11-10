@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/nektos/act/pkg/common"
+	"github.com/nektos/act/pkg/exprparser"
 	"github.com/nektos/act/pkg/model"
 )
 
@@ -118,6 +119,14 @@ func newDispatchedJobExecutor(dispatcher JobDispatcher, info jobInfo, rc *RunCon
 			case JobConclusionSuccess:
 				success = true
 			case JobConclusionFailure:
+				if rc.Run.Job().RawContinueOnError != "" {
+					continueOnError, evalErr := EvalBool(ctx, rc.NewExpressionEvaluator(ctx), rc.Run.Job().RawContinueOnError, exprparser.DefaultStatusCheckNone)
+					if evalErr != nil {
+						err = evalErr
+					} else if continueOnError {
+						success = true
+					}
+				}
 			case JobConclusionCanceled:
 				err = context.Cause(ctx)
 				if err == nil {
