@@ -887,6 +887,12 @@ func (rc *RunContext) isEnabled(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
+	// A remote dispatcher owns the execution environment. Do not require a
+	// local Docker platform mapping before giving it the expanded Job.
+	if rc.Config != nil && rc.Config.JobDispatcher != nil {
+		return true, nil
+	}
+
 	img := rc.platformImage(ctx)
 	if img == "" {
 		for _, platformName := range rc.runsOnPlatformNames(ctx) {
