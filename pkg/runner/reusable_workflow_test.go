@@ -161,7 +161,9 @@ jobs:
 			require.NotNil(t, dispatched)
 			require.Equal(t, calledDirectory, dispatched.Config.Workdir)
 			invocation := dispatched.JobInvocationPath()
-			require.NotEmpty(t, invocation)
+			require.Len(t, invocation, 2)
+			require.Equal(t, ".github/workflows/caller.yml", invocation[0].WorkflowFilePath)
+			require.Equal(t, "caller/repo", invocation[0].WorkflowRepository)
 			leaf := invocation[len(invocation)-1]
 			require.Equal(t, scenario.repository, leaf.WorkflowRepository)
 			require.Equal(t, ".github/workflows/called.yml", leaf.WorkflowFilePath)
@@ -250,7 +252,10 @@ jobs:
 	require.NotNil(t, dispatched)
 	require.Equal(t, filepath.Join(cacheDirectory, safeFilename("octo/reusable@v1@"+sha)), dispatched.Config.Workdir)
 	invocation := dispatched.JobInvocationPath()
-	require.NotEmpty(t, invocation)
+	require.Len(t, invocation, 3)
+	require.Equal(t, ".github/workflows/caller.yml", invocation[0].WorkflowFilePath)
+	require.Equal(t, ".github/workflows/remote.yml", invocation[1].WorkflowFilePath)
+	require.Equal(t, "octo/reusable", invocation[1].WorkflowRepository)
 	leaf := invocation[len(invocation)-1]
 	require.Equal(t, "octo/reusable", leaf.WorkflowRepository)
 	require.Equal(t, ".github/workflows/local.yml", leaf.WorkflowFilePath)

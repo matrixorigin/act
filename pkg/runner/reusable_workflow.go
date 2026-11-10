@@ -242,9 +242,10 @@ func newReusableWorkflowExecutorWithSource(rc *RunContext, directory string, wor
 		childConfig := *rc.Config
 		childConfig.Workdir = directory
 		childConfig.WorkflowPath = source.Path
+		callerContext := *rc
 		childContext := *rc
 		childContext.Config = &childConfig
-		runner, err := NewReusableWorkflowRunner(&childContext)
+		runner, err := newReusableWorkflowRunner(&childContext, &callerContext)
 		if err != nil {
 			return err
 		}
@@ -254,11 +255,15 @@ func newReusableWorkflowExecutorWithSource(rc *RunContext, directory string, wor
 }
 
 func NewReusableWorkflowRunner(rc *RunContext) (Runner, error) {
+	return newReusableWorkflowRunner(rc, rc)
+}
+
+func newReusableWorkflowRunner(rc *RunContext, callerContext *RunContext) (Runner, error) {
 	runner := &runnerImpl{
 		config:    rc.Config,
 		eventJSON: rc.EventJSON,
 		caller: &caller{
-			runContext: rc,
+			runContext: callerContext,
 		},
 	}
 
