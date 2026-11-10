@@ -362,6 +362,67 @@ func TestJobInvocationPath(t *testing.T) {
 	assert.Equal(t, "linux", root.Matrix["os"])
 }
 
+func TestJobInvocationPathWithConcurrencyUsesEachInvocationContext(t *testing.T) {
+	rootWorkflow, err := model.ReadWorkflow(strings.NewReader(`name: root
+on:
+  workflow_dispatch:
+    inputs:
+      version: {type: string}
+concurrency: ${{ inputs.version }}-root
+jobs:
+  call:
+    uses: ./called.yml
+    with: {version: root}
+`), false)
+	assert.NoError(t, err)
+	calledWorkflow, err := model.ReadWorkflow(strings.NewReader(`name: called
+on:
+  workflow_call:
+    inputs:
+      version: {type: string}
+concurrency:
+  group: ${{ inputs.version }}-called
+  cancel-in-progress: ${{ github.event_name == 'workflow_call' }}
+jobs:
+  build:
+    concurrency: ${{ matrix.version }}-job
+    runs-on: self-hosted
+    steps:
+      - run: echo build
+`), false)
+	assert.NoError(t, err)
+	config := &Config{Env: map[string]string{
+		"GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/dev",
+		"SHA_REF": "0123456789abcdef0123456789abcdef01234567",
+	}}
+	root := &RunContext{
+		Run: &model.Run{Workflow: rootWorkflow, JobID: "call"}, Config: config,
+		EventJSON: `{"inputs":{"version":"root"}}`,
+	}
+	root.Config.EventName = "workflow_dispatch"
+	root.ExprEval = root.NewExpressionEvaluator(t.Context())
+	calledConfig := *config
+	calledConfig.EventName = "workflow_call"
+	called := &RunContext{
+		Run: &model.Run{Workflow: calledWorkflow, JobID: "build"}, Config: &calledConfig,
+		Matrix: map[string]any{"version": "1.0"}, EventJSON: `{"inputs":{"version":"root"}}`, caller: &caller{runContext: root},
+	}
+
+	path, err := called.JobInvocationPathWithConcurrency(t.Context())
+
+	assert.NoError(t, err)
+	if assert.Len(t, path, 2) {
+		assert.Equal(t, "root-root", path[0].WorkflowConcurrency.Group)
+		assert.Nil(t, path[0].JobConcurrency)
+		assert.Equal(t, "root-called", path[1].WorkflowConcurrency.Group)
+		assert.True(t, path[1].WorkflowConcurrency.CancelInProgress)
+		assert.Equal(t, "1.0-job", path[1].JobConcurrency.Group)
+	}
+	assert.Equal(t, "${{ inputs.version }}-root", rootWorkflow.RawConcurrency.Value)
+	assert.Equal(t, "${{ inputs.version }}-called", calledWorkflow.RawConcurrency.Content[1].Value)
+	assert.Equal(t, "${{ matrix.version }}-job", calledWorkflow.GetJob("build").RawConcurrency.Value)
+}
+
 func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
 	var jobEnv yaml.Node
 	assert.NoError(t, jobEnv.Encode(map[string]string{"JOB_VALUE": "job"}))

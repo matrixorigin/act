@@ -12,6 +12,7 @@ import (
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/exprparser"
 	"github.com/nektos/act/pkg/model"
+	"gopkg.in/yaml.v3"
 )
 
 // JobConclusion is the durable outcome of a remotely dispatched Job.
@@ -48,9 +49,19 @@ func (f JobDispatcherFunc) DispatchJob(ctx context.Context, rc *RunContext) (Job
 // JobInvocation identifies one Job in a reusable-workflow call chain. Matrix
 // contains the fully expanded values for that invocation.
 type JobInvocation struct {
-	Workflow string
-	JobID    string
-	Matrix   map[string]any
+	Workflow            string
+	JobID               string
+	Matrix              map[string]any
+	WorkflowConcurrency *ConcurrencySpec
+	JobConcurrency      *ConcurrencySpec
+}
+
+// ConcurrencySpec is the evaluated concurrency configuration for one workflow
+// or Job invocation. Each reusable-workflow level is evaluated by its own
+// RunContext so inputs and matrix values cannot leak between callers.
+type ConcurrencySpec struct {
+	Group            string
+	CancelInProgress bool
 }
 
 // JobInvocationPath returns the outer-to-inner reusable-workflow call chain,
@@ -58,22 +69,106 @@ type JobInvocation struct {
 // to resume a dispatched Job without duplicating it. Returned matrices must be
 // treated as immutable.
 func (rc *RunContext) JobInvocationPath() []JobInvocation {
-	var path []JobInvocation
+	contexts := rc.jobInvocationContexts()
+	path := make([]JobInvocation, 0, len(contexts))
+	for _, current := range contexts {
+		path = append(path, JobInvocation{
+			Workflow: current.Run.Workflow.File,
+			JobID:    current.Run.JobID,
+			Matrix:   maps.Clone(current.Matrix),
+		})
+	}
+	return path
+}
+
+// JobInvocationPathWithConcurrency returns the invocation path with every
+// workflow and Job concurrency expression evaluated in its original context.
+// The source YAML nodes remain immutable for concurrent matrix dispatches.
+func (rc *RunContext) JobInvocationPathWithConcurrency(ctx context.Context) ([]JobInvocation, error) {
+	contexts := rc.jobInvocationContexts()
+	path := make([]JobInvocation, 0, len(contexts))
+	for _, current := range contexts {
+		workflowConcurrency, err := current.evaluateConcurrency(ctx, current.Run.Workflow.RawConcurrency)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate workflow %q concurrency: %w", current.Run.Workflow.File, err)
+		}
+		jobConcurrency, err := current.evaluateConcurrency(ctx, current.Run.Job().RawConcurrency)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate Job %q concurrency: %w", current.Run.JobID, err)
+		}
+		path = append(path, JobInvocation{
+			Workflow:            current.Run.Workflow.File,
+			JobID:               current.Run.JobID,
+			Matrix:              maps.Clone(current.Matrix),
+			WorkflowConcurrency: workflowConcurrency,
+			JobConcurrency:      jobConcurrency,
+		})
+	}
+	return path, nil
+}
+
+func (rc *RunContext) jobInvocationContexts() []*RunContext {
+	var contexts []*RunContext
 	for current := rc; current != nil; {
 		if current.Run != nil && current.Run.Workflow != nil {
-			path = append(path, JobInvocation{
-				Workflow: current.Run.Workflow.File,
-				JobID:    current.Run.JobID,
-				Matrix:   maps.Clone(current.Matrix),
-			})
+			contexts = append(contexts, current)
 		}
 		if current.caller == nil {
 			break
 		}
 		current = current.caller.runContext
 	}
-	slices.Reverse(path)
-	return path
+	slices.Reverse(contexts)
+	return contexts
+}
+
+func (rc *RunContext) evaluateConcurrency(ctx context.Context, source yaml.Node) (*ConcurrencySpec, error) {
+	if source.Kind == 0 {
+		return nil, nil
+	}
+	node := cloneConcurrencyNode(source)
+	if err := rc.NewExpressionEvaluator(ctx).EvaluateYamlNode(ctx, &node); err != nil {
+		return nil, err
+	}
+	spec := &ConcurrencySpec{}
+	switch node.Kind {
+	case yaml.ScalarNode:
+		if err := node.Decode(&spec.Group); err != nil {
+			return nil, err
+		}
+	case yaml.MappingNode:
+		var raw struct {
+			Group            string `yaml:"group"`
+			CancelInProgress bool   `yaml:"cancel-in-progress"`
+		}
+		if err := node.Decode(&raw); err != nil {
+			return nil, err
+		}
+		spec.Group, spec.CancelInProgress = raw.Group, raw.CancelInProgress
+	default:
+		return nil, fmt.Errorf("concurrency must be a group or mapping")
+	}
+	if spec.Group == "" {
+		return nil, fmt.Errorf("concurrency group must not be empty")
+	}
+	return spec, nil
+}
+
+func cloneConcurrencyNode(source yaml.Node) yaml.Node {
+	cloned := source
+	cloned.Content = make([]*yaml.Node, len(source.Content))
+	for index, child := range source.Content {
+		if child == nil {
+			continue
+		}
+		node := cloneConcurrencyNode(*child)
+		cloned.Content[index] = &node
+	}
+	if source.Alias != nil {
+		node := cloneConcurrencyNode(*source.Alias)
+		cloned.Alias = &node
+	}
+	return cloned
 }
 
 // JobDispatchContext contains the act-evaluated context needed by an external
