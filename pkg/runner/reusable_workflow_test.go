@@ -175,6 +175,100 @@ jobs:
 	}
 }
 
+type remoteWorkflowArchiveCache struct {
+	sha      string
+	archive  []byte
+	fetchRef string
+}
+
+func (cache *remoteWorkflowArchiveCache) Fetch(_ context.Context, _, _, ref, _ string) (string, error) {
+	cache.fetchRef = ref
+	return cache.sha, nil
+}
+
+func (cache *remoteWorkflowArchiveCache) GetTarArchive(_ context.Context, _, sha, _ string) (io.ReadCloser, error) {
+	if sha != cache.sha {
+		return nil, fmt.Errorf("archive SHA %q does not match frozen SHA %q", sha, cache.sha)
+	}
+	return io.NopCloser(bytes.NewReader(cache.archive)), nil
+}
+
+func TestActionCacheRemoteReusableWorkflowDispatchesNestedLocalJob(t *testing.T) {
+	sha := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, workflow := range []struct {
+		path    string
+		content string
+	}{
+		{path: ".github/workflows/remote.yml", content: `name: remote
+on: workflow_call
+jobs:
+  local:
+    uses: ./.github/workflows/local.yml
+`},
+		{path: ".github/workflows/local.yml", content: `name: local
+on: workflow_call
+jobs:
+  leaf:
+    runs-on: self-hosted
+    steps:
+      - run: echo leaf
+`},
+	} {
+		require.NoError(t, writer.WriteHeader(&tar.Header{Name: workflow.path, Mode: 0o600, Size: int64(len(workflow.content)), Typeflag: tar.TypeReg}))
+		_, err := writer.Write([]byte(workflow.content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	cache := &remoteWorkflowArchiveCache{sha: sha, archive: archive.Bytes()}
+	cacheDirectory := filepath.Join(t.TempDir(), "action-cache")
+	var dispatched *RunContext
+	rc := &RunContext{
+		Name: "call",
+		Config: &Config{
+			Workdir: t.TempDir(), WorkflowPath: ".github/workflows/caller.yml", ActionCacheDir: cacheDirectory, ActionCache: cache,
+			Env: map[string]string{
+				"GITHUB_REPOSITORY": "caller/repo", "GITHUB_REF": "refs/heads/main",
+				"SHA_REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "GITHUB_SERVER_URL": "https://github.com",
+			},
+			JobDispatcher: JobDispatcherFunc(func(_ context.Context, current *RunContext) (JobResult, error) {
+				dispatched = current
+				return JobResult{Conclusion: JobConclusionSuccess}, nil
+			}),
+		},
+		Run: &model.Run{JobID: "call", Workflow: &model.Workflow{Name: "caller", Jobs: map[string]*model.Job{
+			"call": {Uses: "octo/reusable/.github/workflows/remote.yml@v1"},
+		}}},
+	}
+	remote := newRemoteReusableWorkflow(rc.Run.Job().Uses)
+	require.NotNil(t, remote)
+
+	require.NoError(t, newActionCacheReusableWorkflowExecutor(rc, "octo/reusable@v1", remote)(t.Context()))
+	require.Equal(t, "v1", cache.fetchRef)
+	require.NotNil(t, dispatched)
+	require.Equal(t, filepath.Join(cacheDirectory, safeFilename("octo/reusable@v1@"+sha)), dispatched.Config.Workdir)
+	invocation := dispatched.JobInvocationPath()
+	require.NotEmpty(t, invocation)
+	leaf := invocation[len(invocation)-1]
+	require.Equal(t, "octo/reusable", leaf.WorkflowRepository)
+	require.Equal(t, ".github/workflows/local.yml", leaf.WorkflowFilePath)
+	require.Equal(t, sha, leaf.WorkflowSHA)
+	require.Equal(t, "octo/reusable/.github/workflows/local.yml@v1", leaf.WorkflowRef)
+	github := dispatched.JobDispatchContext(t.Context()).GitHub
+	require.Equal(t, leaf.WorkflowRef, github.WorkflowRef)
+	require.Equal(t, sha, github.WorkflowSHA)
+	require.Equal(t, "octo/reusable", github.WorkflowRepository)
+
+	marker := filepath.Join(dispatched.Config.Workdir, ".extracted")
+	require.NoError(t, os.WriteFile(marker, []byte("immutable"), 0o600))
+	require.NoError(t, newActionCacheReusableWorkflowExecutor(rc, "octo/reusable@v1", remote)(t.Context()))
+	content, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	require.Equal(t, "immutable", string(content), "another invocation must not remove an extracted repository in use")
+}
+
 func TestExtractRemoteWorkflowArchive(t *testing.T) {
 	var content bytes.Buffer
 	writer := tar.NewWriter(&content)

@@ -65,13 +65,18 @@ func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, rem
 			executorLock.Unlock()
 			return err
 		}
-		archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, ".")
-		if err != nil {
-			executorLock.Unlock()
-			return err
-		}
-		workflowDir := fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(filename))
-		if err := extractRemoteWorkflowArchive(ctx, archive, workflowDir); err != nil {
+		workflowDir := fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(filename+"@"+sha))
+		if _, err := os.Stat(workflowDir); errors.Is(err, fs.ErrNotExist) {
+			archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, ".")
+			if err != nil {
+				executorLock.Unlock()
+				return err
+			}
+			if err := extractRemoteWorkflowArchive(ctx, archive, workflowDir); err != nil {
+				executorLock.Unlock()
+				return err
+			}
+		} else if err != nil {
 			executorLock.Unlock()
 			return err
 		}
