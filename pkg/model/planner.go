@@ -197,8 +197,23 @@ type workflowPlanner struct {
 	workflows []*Workflow
 }
 
-// PlanEvent builds a new list of runs to execute in parallel for an event name
+// PlanEvent builds a new list of runs to execute in parallel for an event name.
+// It retains act's event-name-only planning behavior.
 func (wp *workflowPlanner) PlanEvent(eventName string) (*Plan, error) {
+	return wp.planEvent(eventName, nil)
+}
+
+// PlanMergeGroupEvent plans checks_requested for the frozen merge-group base.
+// Unlike PlanEvent, it also evaluates merge_group activity and branch filters.
+func PlanMergeGroupEvent(planner WorkflowPlanner, baseBranch string) (*Plan, error) {
+	wp, ok := planner.(*workflowPlanner)
+	if !ok {
+		return nil, fmt.Errorf("workflow planner does not support merge_group event filtering")
+	}
+	return wp.planEvent("merge_group", &baseBranch)
+}
+
+func (wp *workflowPlanner) planEvent(eventName string, mergeGroupBaseBranch *string) (*Plan, error) {
 	plan := new(Plan)
 	if len(wp.workflows) == 0 {
 		log.Debug("no workflows found by planner")
@@ -215,6 +230,16 @@ func (wp *workflowPlanner) PlanEvent(eventName string) (*Plan, error) {
 
 		for _, e := range events {
 			if e == eventName {
+				if mergeGroupBaseBranch != nil {
+					selected, err := w.mergeGroupEventSelected(*mergeGroupBaseBranch)
+					if err != nil {
+						lastErr = err
+						continue
+					}
+					if !selected {
+						continue
+					}
+				}
 				stages, err := createStages(w, w.GetJobIDs()...)
 				if err != nil {
 					log.Warn(err)
