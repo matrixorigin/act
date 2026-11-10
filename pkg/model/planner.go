@@ -22,6 +22,19 @@ type WorkflowPlanner interface {
 	GetEvents() []string
 }
 
+// SetWorkflowSource binds the repository identity used by remote dispatch and
+// workflow_ref evaluation without changing the repository-local workflow path.
+func SetWorkflowSource(planner WorkflowPlanner, source *WorkflowSource) error {
+	wp, ok := planner.(*workflowPlanner)
+	if !ok {
+		return fmt.Errorf("workflow planner does not accept source metadata")
+	}
+	for _, workflow := range wp.workflows {
+		workflow.Source = source
+	}
+	return nil
+}
+
 // Plan contains a list of stages to run in series
 type Plan struct {
 	Stages []*Stage

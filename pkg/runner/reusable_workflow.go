@@ -5,12 +5,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/common/git"
 	"github.com/nektos/act/pkg/model"
@@ -43,9 +47,11 @@ func newRemoteReusableWorkflowExecutor(rc *RunContext) common.Executor {
 		return newActionCacheReusableWorkflowExecutor(rc, filename, remoteReusableWorkflow)
 	}
 
+	source := &model.WorkflowSource{Repository: remoteReusableWorkflow.Org + "/" + remoteReusableWorkflow.Repo,
+		Path: fmt.Sprintf(".github/workflows/%s", remoteReusableWorkflow.Filename), Ref: remoteReusableWorkflow.Ref}
 	return common.NewPipelineExecutor(
 		newMutexExecutor(cloneIfRequired(rc, *remoteReusableWorkflow, workflowDir)),
-		newReusableWorkflowExecutor(rc, workflowDir, fmt.Sprintf("./.github/workflows/%s", remoteReusableWorkflow.Filename)),
+		newReusableWorkflowExecutorWithSource(rc, workflowDir, fmt.Sprintf("./.github/workflows/%s", remoteReusableWorkflow.Filename), source),
 	)
 }
 
@@ -53,34 +59,96 @@ func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, rem
 	return func(ctx context.Context) error {
 		ghctx := rc.getGithubContext(ctx)
 		remoteReusableWorkflow.URL = ghctx.ServerURL
+		executorLock.Lock()
 		sha, err := rc.Config.ActionCache.Fetch(ctx, filename, remoteReusableWorkflow.CloneURL(), remoteReusableWorkflow.Ref, ghctx.Token)
 		if err != nil {
+			executorLock.Unlock()
 			return err
 		}
-		archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, fmt.Sprintf(".github/workflows/%s", remoteReusableWorkflow.Filename))
+		archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, ".")
 		if err != nil {
+			executorLock.Unlock()
 			return err
 		}
-		defer archive.Close()
-		treader := tar.NewReader(archive)
-		if _, err = treader.Next(); err != nil {
+		workflowDir := fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(filename))
+		if err := extractRemoteWorkflowArchive(ctx, archive, workflowDir); err != nil {
+			executorLock.Unlock()
 			return err
 		}
-		planner, err := model.NewSingleWorkflowPlanner(remoteReusableWorkflow.Filename, treader)
-		if err != nil {
-			return err
-		}
-		plan, err := planner.PlanEvent("workflow_call")
-		if err != nil {
-			return err
-		}
+		executorLock.Unlock()
+		source := &model.WorkflowSource{Repository: remoteReusableWorkflow.Org + "/" + remoteReusableWorkflow.Repo,
+			Path: fmt.Sprintf(".github/workflows/%s", remoteReusableWorkflow.Filename), Ref: remoteReusableWorkflow.Ref, SHA: sha}
+		return newReusableWorkflowExecutorWithSource(rc, workflowDir, fmt.Sprintf("./.github/workflows/%s", remoteReusableWorkflow.Filename), source)(ctx)
+	}
+}
 
-		runner, err := NewReusableWorkflowRunner(rc)
+const remoteWorkflowArchiveLimit = 128 << 20
+
+func extractRemoteWorkflowArchive(ctx context.Context, archive io.ReadCloser, directory string) (retErr error) {
+	defer archive.Close()
+	if err := os.RemoveAll(directory); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, os.RemoveAll(directory))
+		}
+	}()
+	reader := tar.NewReader(archive)
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-
-		return runner.NewPlanExecutor(plan)(ctx)
+		name := path.Clean(header.Name)
+		if name == "." {
+			continue
+		}
+		if path.IsAbs(name) || strings.HasPrefix(name, "../") || strings.Contains(name, "\\") {
+			return fmt.Errorf("remote workflow archive contains unsafe path %q", header.Name)
+		}
+		target, err := joinUnder(directory, name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if header.Size < 0 || total > remoteWorkflowArchiveLimit-header.Size {
+				return fmt.Errorf("remote workflow archive exceeds %d bytes", remoteWorkflowArchiveLimit)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			file, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(header.Mode)&0o777)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.CopyN(file, reader, header.Size)
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			total += header.Size
+		default:
+			return fmt.Errorf("remote workflow archive contains unsupported entry %q", header.Name)
+		}
 	}
 }
 
@@ -119,6 +187,10 @@ func cloneIfRequired(rc *RunContext, remoteReusableWorkflow remoteReusableWorkfl
 }
 
 func newReusableWorkflowExecutor(rc *RunContext, directory string, workflow string) common.Executor {
+	return newReusableWorkflowExecutorWithSource(rc, directory, workflow, nil)
+}
+
+func newReusableWorkflowExecutorWithSource(rc *RunContext, directory string, workflow string, source *model.WorkflowSource) common.Executor {
 	return func(ctx context.Context) error {
 		workflowPath, err := joinUnder(directory, strings.TrimPrefix(workflow, "./"))
 		if err != nil {
@@ -128,8 +200,32 @@ func newReusableWorkflowExecutor(rc *RunContext, directory string, workflow stri
 		if err != nil {
 			return err
 		}
+		relative, err := filepath.Rel(directory, workflowPath)
+		if err != nil {
+			return err
+		}
+		resolveSHA := source != nil && source.SHA == ""
+		if source == nil {
+			inherited := rc.workflowSource()
+			source = &inherited
+		}
+		source.Path = filepath.ToSlash(relative)
+		if resolveSHA {
+			repository, err := gogit.PlainOpen(directory)
+			if err != nil {
+				return err
+			}
+			head, err := repository.Head()
+			if err != nil {
+				return err
+			}
+			source.SHA = head.Hash().String()
+		}
 		planner, err := model.NewSingleWorkflowPlannerFromContent(workflowPath, content, false)
 		if err != nil {
+			return err
+		}
+		if err := model.SetWorkflowSource(planner, source); err != nil {
 			return err
 		}
 
@@ -138,7 +234,12 @@ func newReusableWorkflowExecutor(rc *RunContext, directory string, workflow stri
 			return err
 		}
 
-		runner, err := NewReusableWorkflowRunner(rc)
+		childConfig := *rc.Config
+		childConfig.Workdir = directory
+		childConfig.WorkflowPath = source.Path
+		childContext := *rc
+		childContext.Config = &childConfig
+		runner, err := NewReusableWorkflowRunner(&childContext)
 		if err != nil {
 			return err
 		}

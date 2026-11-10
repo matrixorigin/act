@@ -23,6 +23,7 @@ type Runner interface {
 type Config struct {
 	Actor                              string                       // the user that triggered the event
 	Workdir                            string                       // path to working directory
+	WorkflowPath                       string                       // repository-relative path of the root workflow
 	ActionCacheDir                     string                       // path used for caching action contents
 	ActionOfflineMode                  bool                         // when offline, use caching action contents
 	DisableRemoteReusableWorkflows     bool                         // reject remote reusable workflows before cloning them

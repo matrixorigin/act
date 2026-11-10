@@ -959,6 +959,19 @@ func (rc *RunContext) getStepsContext() map[string]*model.StepResult {
 	return rc.StepResults
 }
 
+func (rc *RunContext) workflowSource() model.WorkflowSource {
+	if rc.Run != nil && rc.Run.Workflow != nil && rc.Run.Workflow.Source != nil {
+		return *rc.Run.Workflow.Source
+	}
+	if rc.Config == nil {
+		return model.WorkflowSource{}
+	}
+	return model.WorkflowSource{
+		Repository: rc.Config.Env["GITHUB_REPOSITORY"], Path: rc.Config.WorkflowPath,
+		Ref: rc.Config.Env["GITHUB_REF"], SHA: rc.Config.Env["SHA_REF"],
+	}
+}
+
 func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext {
 	logger := common.Logger(ctx)
 	ghc := &model.GithubContext{
@@ -1037,6 +1050,20 @@ func (rc *RunContext) getGithubContext(ctx context.Context) *model.GithubContext
 	}
 
 	ghc.SetRefTypeAndName()
+	source := rc.workflowSource()
+	if source.Repository == "" {
+		source.Repository = ghc.Repository
+	}
+	if source.Ref == "" {
+		source.Ref = ghc.Ref
+	}
+	if source.SHA == "" {
+		source.SHA = ghc.Sha
+	}
+	ghc.WorkflowRepository, ghc.WorkflowSHA, ghc.WorkflowFilePath = source.Repository, source.SHA, source.Path
+	if source.Repository != "" && source.Path != "" && source.Ref != "" {
+		ghc.WorkflowRef = source.Repository + "/" + source.Path + "@" + source.Ref
+	}
 
 	// defaults
 	ghc.ServerURL = "https://github.com"

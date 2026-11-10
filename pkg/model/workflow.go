@@ -16,8 +16,16 @@ import (
 )
 
 // Workflow is the structure of the files in .github/workflows
+type WorkflowSource struct {
+	Repository string
+	Path       string
+	Ref        string
+	SHA        string
+}
+
 type Workflow struct {
 	File           string
+	Source         *WorkflowSource   `yaml:"-" json:"-"`
 	Name           string            `yaml:"name"`
 	RawOn          yaml.Node         `yaml:"on"`
 	RawPermissions yaml.Node         `yaml:"permissions"`

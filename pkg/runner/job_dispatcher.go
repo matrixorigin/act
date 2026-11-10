@@ -50,6 +50,10 @@ func (f JobDispatcherFunc) DispatchJob(ctx context.Context, rc *RunContext) (Job
 // contains the fully expanded values for that invocation.
 type JobInvocation struct {
 	Workflow            string
+	WorkflowRepository  string
+	WorkflowRef         string
+	WorkflowSHA         string
+	WorkflowFilePath    string
 	JobID               string
 	Matrix              map[string]any
 	Permissions         yaml.Node `json:"-"`
@@ -110,7 +114,13 @@ func (rc *RunContext) jobInvocation() JobInvocation {
 	if permissions.Kind == 0 {
 		permissions = rc.Run.Workflow.RawPermissions
 	}
-	return JobInvocation{Workflow: rc.Run.Workflow.File, JobID: rc.Run.JobID, Matrix: maps.Clone(rc.Matrix), Permissions: permissions}
+	source := rc.workflowSource()
+	workflowRef := ""
+	if source.Repository != "" && source.Path != "" && source.Ref != "" {
+		workflowRef = source.Repository + "/" + source.Path + "@" + source.Ref
+	}
+	return JobInvocation{Workflow: rc.Run.Workflow.File, WorkflowRepository: source.Repository, WorkflowRef: workflowRef, WorkflowSHA: source.SHA,
+		WorkflowFilePath: source.Path, JobID: rc.Run.JobID, Matrix: maps.Clone(rc.Matrix), Permissions: permissions}
 }
 
 func (rc *RunContext) jobInvocationContexts() []*RunContext {

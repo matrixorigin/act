@@ -1,8 +1,11 @@
 package runner
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,4 +116,87 @@ func TestRemoteReusableWorkflowCanBeDisabled(t *testing.T) {
 	err := newRemoteReusableWorkflowExecutor(rc)(t.Context())
 
 	require.ErrorIs(t, err, ErrRemoteReusableWorkflowDisabled)
+}
+
+func TestReusableWorkflowDispatchUsesContainingWorkflowSource(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		source     *model.WorkflowSource
+		repository string
+		ref        string
+		sha        string
+	}{
+		{name: "local", repository: "caller/repo", ref: "refs/heads/main", sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		{name: "remote", source: &model.WorkflowSource{Repository: "called/repo", Ref: "v1", SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+			repository: "called/repo", ref: "v1", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			callerDirectory := t.TempDir()
+			calledDirectory := t.TempDir()
+			workflows := filepath.Join(calledDirectory, ".github", "workflows")
+			require.NoError(t, os.MkdirAll(workflows, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(workflows, "called.yml"), []byte(`name: called
+on: workflow_call
+jobs:
+  called:
+    runs-on: self-hosted
+    steps:
+      - run: echo called
+`), 0o600))
+
+			var dispatched *RunContext
+			rc := &RunContext{
+				Name: "call",
+				Config: &Config{
+					Workdir: callerDirectory, WorkflowPath: ".github/workflows/caller.yml",
+					Env: map[string]string{"GITHUB_REPOSITORY": "caller/repo", "GITHUB_REF": "refs/heads/main", "SHA_REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+					JobDispatcher: JobDispatcherFunc(func(_ context.Context, current *RunContext) (JobResult, error) {
+						dispatched = current
+						return JobResult{Conclusion: JobConclusionSuccess}, nil
+					}),
+				},
+				Run: &model.Run{JobID: "call", Workflow: &model.Workflow{Name: "caller", Jobs: map[string]*model.Job{"call": {}}}},
+			}
+			require.NoError(t, newReusableWorkflowExecutorWithSource(rc, calledDirectory, "./.github/workflows/called.yml", scenario.source)(t.Context()))
+			require.NotNil(t, dispatched)
+			require.Equal(t, calledDirectory, dispatched.Config.Workdir)
+			invocation := dispatched.JobInvocationPath()
+			require.NotEmpty(t, invocation)
+			leaf := invocation[len(invocation)-1]
+			require.Equal(t, scenario.repository, leaf.WorkflowRepository)
+			require.Equal(t, ".github/workflows/called.yml", leaf.WorkflowFilePath)
+			require.Equal(t, scenario.sha, leaf.WorkflowSHA)
+			require.Equal(t, scenario.repository+"/.github/workflows/called.yml@"+scenario.ref, leaf.WorkflowRef)
+			github := dispatched.JobDispatchContext(t.Context()).GitHub
+			require.Equal(t, leaf.WorkflowRef, github.WorkflowRef)
+			require.Equal(t, scenario.sha, github.WorkflowSHA)
+			require.Equal(t, scenario.repository, github.WorkflowRepository)
+		})
+	}
+}
+
+func TestExtractRemoteWorkflowArchive(t *testing.T) {
+	var content bytes.Buffer
+	writer := tar.NewWriter(&content)
+	require.NoError(t, writer.WriteHeader(&tar.Header{Name: ".github/workflows/called.yml", Mode: 0o600, Size: 4, Typeflag: tar.TypeReg}))
+	_, err := writer.Write([]byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	directory := filepath.Join(t.TempDir(), "remote")
+	require.NoError(t, extractRemoteWorkflowArchive(t.Context(), io.NopCloser(bytes.NewReader(content.Bytes())), directory))
+	extracted, err := os.ReadFile(filepath.Join(directory, ".github", "workflows", "called.yml"))
+	require.NoError(t, err)
+	require.Equal(t, "test", string(extracted))
+
+	content.Reset()
+	writer = tar.NewWriter(&content)
+	require.NoError(t, writer.WriteHeader(&tar.Header{Name: "../outside", Mode: 0o600, Size: 1, Typeflag: tar.TypeReg}))
+	_, err = writer.Write([]byte("x"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	unsafeDirectory := filepath.Join(t.TempDir(), "remote")
+	err = extractRemoteWorkflowArchive(t.Context(), io.NopCloser(bytes.NewReader(content.Bytes())), unsafeDirectory)
+	require.ErrorContains(t, err, "unsafe path")
+	_, err = os.Stat(unsafeDirectory)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
