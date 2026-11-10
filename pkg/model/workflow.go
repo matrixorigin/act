@@ -197,6 +197,7 @@ type Job struct {
 	Name           string                    `yaml:"name"`
 	RawNeeds       yaml.Node                 `yaml:"needs"`
 	RawRunsOn      yaml.Node                 `yaml:"runs-on"`
+	RawEnvironment yaml.Node                 `yaml:"environment"`
 	Env            yaml.Node                 `yaml:"env"`
 	If             yaml.Node                 `yaml:"if"`
 	Steps          []*Step                   `yaml:"steps"`

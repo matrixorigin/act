@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nektos/act/pkg/model"
@@ -100,6 +101,20 @@ jobs:
 
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"first", "second"}, calls)
+}
+
+func TestJobDispatcherPreservesDeploymentEnvironment(t *testing.T) {
+	workflow, err := model.ReadWorkflow(strings.NewReader(`name: environment
+on: push
+jobs:
+  deploy:
+    environment: production
+    runs-on: self-hosted
+    steps:
+      - run: echo deploy
+`), false)
+	assert.NoError(t, err)
+	assert.Equal(t, "production", workflow.GetJob("deploy").RawEnvironment.Value)
 }
 
 func TestJobInvocationPath(t *testing.T) {
