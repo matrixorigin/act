@@ -9,6 +9,7 @@ import (
 
 	"github.com/nektos/act/pkg/model"
 	assert "github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 func TestDispatchedJobExecutorResult(t *testing.T) {
@@ -120,4 +121,29 @@ func TestJobInvocationPath(t *testing.T) {
 	}, path)
 	path[0].Matrix["os"] = "changed"
 	assert.Equal(t, "linux", root.Matrix["os"])
+}
+
+func TestJobDispatchContextEvaluatesEnvironment(t *testing.T) {
+	var jobEnv yaml.Node
+	assert.NoError(t, jobEnv.Encode(map[string]string{"JOB_VALUE": "job"}))
+	workflow := &model.Workflow{
+		File: "remote.yml",
+		Env:  map[string]string{"WORKFLOW_VALUE": "workflow", "FROZEN": "${{ github.sha }}"},
+		Jobs: map[string]*model.Job{
+			"build": {Env: jobEnv, Steps: []*model.Step{{Run: "echo remote"}}},
+		},
+	}
+	rc := &RunContext{
+		Run:    &model.Run{Workflow: workflow, JobID: "build"},
+		Config: &Config{Env: map[string]string{"CONFIG_VALUE": "config", "SHA_REF": "0123456789abcdef"}, EventName: "push"},
+	}
+
+	dispatch := rc.JobDispatchContext(t.Context())
+
+	assert.Equal(t, "workflow", dispatch.Env["WORKFLOW_VALUE"])
+	assert.Equal(t, "job", dispatch.Env["JOB_VALUE"])
+	assert.Equal(t, "config", dispatch.Env["CONFIG_VALUE"])
+	assert.Equal(t, "0123456789abcdef", dispatch.Env["FROZEN"])
+	assert.NotContains(t, dispatch.Env, "ACT")
+	assert.Equal(t, "true", rc.GetEnv()["ACT"])
 }

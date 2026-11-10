@@ -81,17 +81,25 @@ type JobDispatchContext struct {
 	Inputs  map[string]any
 	Secrets map[string]string
 	Vars    map[string]string
+	Env     map[string]string
 }
 
 // JobDispatchContext resolves the same expression contexts act uses for the
 // current Job, including inputs and secrets inherited through reusable calls.
 func (rc *RunContext) JobDispatchContext(ctx context.Context) JobDispatchContext {
 	github := rc.getGithubContext(ctx)
+	env := maps.Clone(rc.GetEnv())
+	delete(env, "ACT")
+	evaluator := rc.NewExpressionEvaluator(ctx)
+	for name, value := range env {
+		env[name] = evaluator.Interpolate(ctx, value)
+	}
 	return JobDispatchContext{
 		GitHub:  github,
 		Inputs:  getEvaluatorInputs(ctx, rc, nil, github),
 		Secrets: maps.Clone(getWorkflowSecrets(ctx, rc)),
 		Vars:    maps.Clone(getWorkflowVars(ctx, rc)),
+		Env:     env,
 	}
 }
 
