@@ -69,6 +69,7 @@ type Config struct {
 	ConcurrentJobs                     int                          // Number of max concurrent jobs
 	JobDispatcher                      JobDispatcher                // Dispatch default Jobs remotely instead of executing them locally
 	WorkflowAdmission                  func(*model.Workflow) error  // Validate each root or reusable Workflow before executing its plan
+	HashFiles                          HashFilesFunc                // Evaluate hashFiles against an external executor's frozen repository
 }
 
 func (config *Config) GetConcurrentJobs() int {

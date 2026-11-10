@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"maps"
+	"os"
+	"os/exec"
 	"path"
 	"reflect"
 	"regexp"
@@ -176,28 +179,19 @@ func (rc *RunContext) newStepExpressionEvaluator(ctx context.Context, step step,
 
 func getHashFilesFunction(ctx context.Context, rc *RunContext) func(v []reflect.Value) (interface{}, error) {
 	hashFiles := func(v []reflect.Value) (interface{}, error) {
+		patterns, followSymlink, err := hashFilesArguments(v)
+		if err != nil {
+			return "", err
+		}
+		if rc.JobContainer == nil && rc.Config != nil && rc.Config.HashFiles != nil {
+			return rc.Config.HashFiles(ctx, patterns, followSymlink)
+		}
 		if rc.JobContainer != nil {
 			timeed, cancel := context.WithTimeout(ctx, time.Minute)
 			defer cancel()
 			name := "workflow/hashfiles/index.js"
 			hout := &bytes.Buffer{}
 			herr := &bytes.Buffer{}
-			patterns := []string{}
-			followSymlink := false
-
-			for i, p := range v {
-				s := p.String()
-				if i == 0 {
-					if strings.HasPrefix(s, "--") {
-						if strings.EqualFold(s, "--follow-symbolic-links") {
-							followSymlink = true
-							continue
-						}
-						return "", fmt.Errorf("Invalid glob option %s, available option: '--follow-symbolic-links'", s)
-					}
-				}
-				patterns = append(patterns, s)
-			}
 			env := map[string]string{}
 			for k, v := range rc.Env {
 				env[k] = v
@@ -233,6 +227,75 @@ func getHashFilesFunction(ctx context.Context, rc *RunContext) func(v []reflect.
 		return "", nil
 	}
 	return hashFiles
+}
+
+func hashFilesArguments(values []reflect.Value) ([]string, bool, error) {
+	patterns := []string{}
+	followSymlink := false
+	for index, value := range values {
+		pattern := value.String()
+		if index == 0 && strings.HasPrefix(pattern, "--") {
+			if strings.EqualFold(pattern, "--follow-symbolic-links") {
+				followSymlink = true
+				continue
+			}
+			return nil, false, fmt.Errorf("Invalid glob option %s, available option: '--follow-symbolic-links'", pattern)
+		}
+		patterns = append(patterns, pattern)
+	}
+	return patterns, followSymlink, nil
+}
+
+// HashFilesFunc evaluates GitHub's hashFiles expression against one immutable
+// repository view supplied by an external executor.
+type HashFilesFunc func(ctx context.Context, patterns []string, followSymbolicLinks bool) (string, error)
+
+// HashFiles evaluates the same bundled @actions/glob implementation used by
+// act's container path, but against a local frozen repository directory.
+func HashFiles(ctx context.Context, directory string, patterns []string, followSymbolicLinks bool) (string, error) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return "", err
+	}
+	script, err := os.CreateTemp("", "act-hashfiles-*.js")
+	if err != nil {
+		return "", err
+	}
+	name := script.Name()
+	defer os.Remove(name)
+	if _, err := script.WriteString(hashfiles); err != nil {
+		_ = script.Close()
+		return "", err
+	}
+	if err := script.Close(); err != nil {
+		return "", err
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	command := exec.CommandContext(commandCtx, node, name)
+	command.Dir = directory
+	command.Env = append(os.Environ(), "patterns="+strings.Join(patterns, "\n"))
+	if followSymbolicLinks {
+		command.Env = append(command.Env, "followSymbolicLinks=true")
+	}
+	var stderr bytes.Buffer
+	command.Stdout = io.Discard
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("run hashFiles: %w", err)
+	}
+	output := stderr.String()
+	const guard = "__OUTPUT__"
+	start := strings.Index(output, guard)
+	if start < 0 {
+		return "", fmt.Errorf("hashFiles did not return a result")
+	}
+	start += len(guard)
+	end := strings.Index(output[start:], guard)
+	if end < 0 {
+		return "", fmt.Errorf("hashFiles returned an incomplete result")
+	}
+	return output[start : start+end], nil
 }
 
 type expressionEvaluator struct {
