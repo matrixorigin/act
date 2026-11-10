@@ -102,7 +102,17 @@ func TestDispatchedJobTimeout(t *testing.T) {
 	timeout, err := dispatchedJobTimeout(t.Context(), rc)
 	assert.NoError(t, err)
 	assert.Equal(t, 5*time.Minute, timeout)
-	for _, raw := range []string{"0", "-1", "invalid", "${{ missing.function() }}"} {
+	for _, raw := range []string{"0.5", "${{ 0.001 }}"} {
+		rc.Run.Job().TimeoutMinutes = raw
+		timeout, err = dispatchedJobTimeout(t.Context(), rc)
+		assert.NoError(t, err, raw)
+		if raw == "0.5" {
+			assert.Equal(t, 30*time.Second, timeout)
+		} else {
+			assert.Equal(t, 60*time.Millisecond, timeout)
+		}
+	}
+	for _, raw := range []string{"0", "-1", "invalid", "NaN", "+Inf", "1e100", "1e-100", "${{ missing.function() }}"} {
 		rc.Run.Job().TimeoutMinutes = raw
 		_, err = dispatchedJobTimeout(t.Context(), rc)
 		assert.Error(t, err, raw)

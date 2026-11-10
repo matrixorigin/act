@@ -166,9 +166,11 @@ func dispatchedJobTimeout(ctx context.Context, rc *RunContext) (time.Duration, e
 		return 0, nil
 	}
 	value := rc.NewExpressionEvaluator(ctx).Interpolate(ctx, raw)
-	minutes, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || minutes <= 0 || minutes > math.MaxInt64/int64(time.Minute) {
-		return 0, fmt.Errorf("remote Job timeout-minutes must resolve to a positive integer: %q", raw)
+	minutes, err := strconv.ParseFloat(value, 64)
+	duration := minutes * float64(time.Minute)
+	if err != nil || math.IsNaN(minutes) || math.IsInf(minutes, 0) || minutes <= 0 ||
+		duration < float64(time.Nanosecond) || duration >= float64(math.MaxInt64) {
+		return 0, fmt.Errorf("remote Job timeout-minutes must resolve to a positive finite number: %q", raw)
 	}
-	return time.Duration(minutes) * time.Minute, nil
+	return time.Duration(duration), nil
 }
