@@ -100,3 +100,24 @@ jobs:
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"first", "second"}, calls)
 }
+
+func TestJobInvocationPath(t *testing.T) {
+	root := &RunContext{
+		Run:    &model.Run{Workflow: &model.Workflow{File: "root.yml"}, JobID: "call"},
+		Matrix: map[string]any{"os": "linux"},
+	}
+	called := &RunContext{
+		Run:    &model.Run{Workflow: &model.Workflow{File: "called.yml"}, JobID: "build"},
+		Matrix: map[string]any{"version": "1.0"},
+		caller: &caller{runContext: root},
+	}
+
+	path := called.JobInvocationPath()
+
+	assert.Equal(t, []JobInvocation{
+		{Workflow: "root.yml", JobID: "call", Matrix: map[string]any{"os": "linux"}},
+		{Workflow: "called.yml", JobID: "build", Matrix: map[string]any{"version": "1.0"}},
+	}, path)
+	path[0].Matrix["os"] = "changed"
+	assert.Equal(t, "linux", root.Matrix["os"])
+}

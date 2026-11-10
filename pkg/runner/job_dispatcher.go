@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/nektos/act/pkg/common"
 )
@@ -37,6 +38,37 @@ type JobDispatcherFunc func(context.Context, *RunContext) (JobResult, error)
 // DispatchJob calls f(ctx, rc).
 func (f JobDispatcherFunc) DispatchJob(ctx context.Context, rc *RunContext) (JobResult, error) {
 	return f(ctx, rc)
+}
+
+// JobInvocation identifies one Job in a reusable-workflow call chain. Matrix
+// contains the fully expanded values for that invocation.
+type JobInvocation struct {
+	Workflow string
+	JobID    string
+	Matrix   map[string]any
+}
+
+// JobInvocationPath returns the outer-to-inner reusable-workflow call chain,
+// including rc itself. Callers can combine this path with their run/attempt ID
+// to resume a dispatched Job without duplicating it. Returned matrices must be
+// treated as immutable.
+func (rc *RunContext) JobInvocationPath() []JobInvocation {
+	var path []JobInvocation
+	for current := rc; current != nil; {
+		if current.Run != nil && current.Run.Workflow != nil {
+			path = append(path, JobInvocation{
+				Workflow: current.Run.Workflow.File,
+				JobID:    current.Run.JobID,
+				Matrix:   maps.Clone(current.Matrix),
+			})
+		}
+		if current.caller == nil {
+			break
+		}
+		current = current.caller.runContext
+	}
+	slices.Reverse(path)
+	return path
 }
 
 func newDispatchedJobExecutor(dispatcher JobDispatcher, info jobInfo, rc *RunContext) common.Executor {
