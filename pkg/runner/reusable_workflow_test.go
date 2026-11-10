@@ -112,5 +112,5 @@ func TestRemoteReusableWorkflowCanBeDisabled(t *testing.T) {
 
 	err := newRemoteReusableWorkflowExecutor(rc)(t.Context())
 
-	require.ErrorContains(t, err, "remote reusable workflows are disabled")
+	require.ErrorIs(t, err, ErrRemoteReusableWorkflowDisabled)
 }

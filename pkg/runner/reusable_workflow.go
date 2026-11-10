@@ -20,9 +20,11 @@ func newLocalReusableWorkflowExecutor(rc *RunContext) common.Executor {
 	return newReusableWorkflowExecutor(rc, rc.Config.Workdir, rc.Run.Job().Uses)
 }
 
+var ErrRemoteReusableWorkflowDisabled = errors.New("remote reusable workflows are disabled by the runner configuration")
+
 func newRemoteReusableWorkflowExecutor(rc *RunContext) common.Executor {
 	if rc.Config.DisableRemoteReusableWorkflows {
-		return common.NewErrorExecutor(errors.New("remote reusable workflows are disabled by the runner configuration"))
+		return common.NewErrorExecutor(ErrRemoteReusableWorkflowDisabled)
 	}
 	uses := rc.Run.Job().Uses
 
