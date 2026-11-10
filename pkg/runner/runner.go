@@ -67,6 +67,7 @@ type Config struct {
 	ActionCache                        ActionCache                  // Use a custom ActionCache Implementation
 	ConcurrentJobs                     int                          // Number of max concurrent jobs
 	JobDispatcher                      JobDispatcher                // Dispatch default Jobs remotely instead of executing them locally
+	WorkflowAdmission                  func(*model.Workflow) error  // Validate each root or reusable Workflow before executing its plan
 }
 
 func (config *Config) GetConcurrentJobs() int {
@@ -220,7 +221,28 @@ func (runner *runnerImpl) NewPlanExecutor(plan *model.Plan) common.Executor {
 		})
 	}
 
-	return common.NewPipelineExecutor(stagePipeline...).Then(handleFailure(plan))
+	return common.NewPipelineExecutor(runner.workflowAdmission(plan), common.NewPipelineExecutor(stagePipeline...).Then(handleFailure(plan)))
+}
+
+func (runner *runnerImpl) workflowAdmission(plan *model.Plan) common.Executor {
+	return func(context.Context) error {
+		if runner.config.WorkflowAdmission == nil {
+			return nil
+		}
+		seen := map[*model.Workflow]struct{}{}
+		for _, stage := range plan.Stages {
+			for _, run := range stage.Runs {
+				if _, admitted := seen[run.Workflow]; admitted {
+					continue
+				}
+				seen[run.Workflow] = struct{}{}
+				if err := runner.config.WorkflowAdmission(run.Workflow); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 }
 
 func handleFailure(plan *model.Plan) common.Executor {

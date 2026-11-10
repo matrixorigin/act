@@ -17,12 +17,14 @@ import (
 
 // Workflow is the structure of the files in .github/workflows
 type Workflow struct {
-	File     string
-	Name     string            `yaml:"name"`
-	RawOn    yaml.Node         `yaml:"on"`
-	Env      map[string]string `yaml:"env"`
-	Jobs     map[string]*Job   `yaml:"jobs"`
-	Defaults Defaults          `yaml:"defaults"`
+	File           string
+	Name           string            `yaml:"name"`
+	RawOn          yaml.Node         `yaml:"on"`
+	RawPermissions yaml.Node         `yaml:"permissions"`
+	RawConcurrency yaml.Node         `yaml:"concurrency"`
+	Env            map[string]string `yaml:"env"`
+	Jobs           map[string]*Job   `yaml:"jobs"`
+	Defaults       Defaults          `yaml:"defaults"`
 }
 
 // On events for the workflow
@@ -204,6 +206,8 @@ type Job struct {
 	RawNeeds           yaml.Node                 `yaml:"needs"`
 	RawRunsOn          yaml.Node                 `yaml:"runs-on"`
 	RawEnvironment     yaml.Node                 `yaml:"environment"`
+	RawPermissions     yaml.Node                 `yaml:"permissions"`
+	RawConcurrency     yaml.Node                 `yaml:"concurrency"`
 	Env                yaml.Node                 `yaml:"env"`
 	If                 yaml.Node                 `yaml:"if"`
 	Steps              []*Step                   `yaml:"steps"`

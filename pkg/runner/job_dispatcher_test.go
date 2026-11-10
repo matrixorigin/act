@@ -214,6 +214,60 @@ jobs:
 	assert.Equal(t, []string{"linux", "windows"}, observed)
 }
 
+func TestWorkflowAdmissionIncludesReusableWorkflows(t *testing.T) {
+	directory := t.TempDir()
+	assert.NoError(t, os.MkdirAll(filepath.Join(directory, ".github", "workflows"), 0o700))
+	caller := []byte(`name: caller
+on: push
+jobs:
+  call:
+    uses: ./.github/workflows/called.yml
+`)
+	called := []byte(`name: called
+on: workflow_call
+concurrency: called-group
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - run: echo remote
+`)
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, "caller.yml"), caller, 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, ".github", "workflows", "called.yml"), called, 0o600))
+	planner, err := model.NewWorkflowPlanner(filepath.Join(directory, "caller.yml"), true, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	admissionErr := errors.New("workflow concurrency is unsupported")
+	var admitted []string
+	dispatchCalls := 0
+	runner, err := New(&Config{
+		Workdir: directory, EventName: "push", GitHubInstance: "github.com", RemoteName: "origin",
+		Env: map[string]string{
+			"GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/dev", "SHA_REF": "0123456789abcdef0123456789abcdef01234567",
+		},
+		WorkflowAdmission: func(workflow *model.Workflow) error {
+			admitted = append(admitted, workflow.Name)
+			if workflow.RawConcurrency.Kind != 0 {
+				return admissionErr
+			}
+			return nil
+		},
+		JobDispatcher: JobDispatcherFunc(func(context.Context, *RunContext) (JobResult, error) {
+			dispatchCalls++
+			return JobResult{Conclusion: JobConclusionSuccess}, nil
+		}),
+	})
+	assert.NoError(t, err)
+
+	err = runner.NewPlanExecutor(plan)(t.Context())
+
+	assert.ErrorIs(t, err, admissionErr)
+	assert.Equal(t, []string{"caller", "called"}, admitted)
+	assert.Zero(t, dispatchCalls)
+}
+
 func TestJobDispatcherPreservesDeploymentEnvironment(t *testing.T) {
 	workflow, err := model.ReadWorkflow(strings.NewReader(`name: environment
 on: push
