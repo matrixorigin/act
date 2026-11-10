@@ -65,6 +65,18 @@ func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, rem
 			executorLock.Unlock()
 			return err
 		}
+		workflowRef := remoteReusableWorkflow.Ref
+		if resolver, ok := rc.Config.ActionCache.(WorkflowRefResolver); ok {
+			workflowRef, err = resolver.ResolveWorkflowRef(ctx, filename, remoteReusableWorkflow.Ref, sha)
+			if err != nil {
+				executorLock.Unlock()
+				return err
+			}
+			if workflowRef == "" {
+				executorLock.Unlock()
+				return errors.New("resolved reusable workflow ref is empty")
+			}
+		}
 		workflowDir := fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(filename+"@"+sha))
 		if _, err := os.Stat(workflowDir); errors.Is(err, fs.ErrNotExist) {
 			archive, err := rc.Config.ActionCache.GetTarArchive(ctx, filename, sha, ".")
@@ -82,7 +94,7 @@ func newActionCacheReusableWorkflowExecutor(rc *RunContext, filename string, rem
 		}
 		executorLock.Unlock()
 		source := &model.WorkflowSource{Repository: remoteReusableWorkflow.Org + "/" + remoteReusableWorkflow.Repo,
-			Path: fmt.Sprintf(".github/workflows/%s", remoteReusableWorkflow.Filename), Ref: remoteReusableWorkflow.Ref, SHA: sha}
+			Path: fmt.Sprintf(".github/workflows/%s", remoteReusableWorkflow.Filename), Ref: workflowRef, SHA: sha}
 		return newReusableWorkflowExecutorWithSource(rc, workflowDir, fmt.Sprintf("./.github/workflows/%s", remoteReusableWorkflow.Filename), source)(ctx)
 	}
 }

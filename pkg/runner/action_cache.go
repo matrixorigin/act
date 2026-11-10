@@ -27,6 +27,12 @@ type ActionCache interface {
 	GetTarArchive(ctx context.Context, cacheDir, sha, includePrefix string) (io.ReadCloser, error)
 }
 
+// WorkflowRefResolver preserves the canonical branch/tag identity of a
+// reusable workflow after its original uses ref has been pinned to a commit.
+type WorkflowRefResolver interface {
+	ResolveWorkflowRef(ctx context.Context, cacheDir, ref, sha string) (string, error)
+}
+
 type GoGitActionCache struct {
 	Path string
 }

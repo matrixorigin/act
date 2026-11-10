@@ -195,6 +195,13 @@ func (cache *remoteWorkflowArchiveCache) GetTarArchive(_ context.Context, _, sha
 	return io.NopCloser(bytes.NewReader(cache.archive)), nil
 }
 
+func (cache *remoteWorkflowArchiveCache) ResolveWorkflowRef(_ context.Context, _, _, sha string) (string, error) {
+	if sha != cache.sha {
+		return "", fmt.Errorf("workflow SHA %q does not match frozen SHA %q", sha, cache.sha)
+	}
+	return "refs/tags/v1", nil
+}
+
 func TestActionCacheRemoteReusableWorkflowDispatchesNestedLocalJob(t *testing.T) {
 	sha := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	var archive bytes.Buffer
@@ -260,7 +267,7 @@ jobs:
 	require.Equal(t, "octo/reusable", leaf.WorkflowRepository)
 	require.Equal(t, ".github/workflows/local.yml", leaf.WorkflowFilePath)
 	require.Equal(t, sha, leaf.WorkflowSHA)
-	require.Equal(t, "octo/reusable/.github/workflows/local.yml@v1", leaf.WorkflowRef)
+	require.Equal(t, "octo/reusable/.github/workflows/local.yml@refs/tags/v1", leaf.WorkflowRef)
 	github := dispatched.JobDispatchContext(t.Context()).GitHub
 	require.Equal(t, leaf.WorkflowRef, github.WorkflowRef)
 	require.Equal(t, sha, github.WorkflowSHA)
