@@ -73,6 +73,7 @@ jobs:
 
 			plan, err := PlanMergeGroupEvent(planner, "dev")
 			assert.ErrorIs(t, err, ErrMergeGroupEventFilterUnsupported)
+			assert.ErrorIs(t, err, ErrInvalidWorkflowDefinition)
 			assert.NotNil(t, plan)
 		})
 	}

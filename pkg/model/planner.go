@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -127,7 +128,7 @@ func NewWorkflowPlanner(path string, noWorkflowRecurse, strict bool) (WorkflowPl
 			workflow, err := ReadWorkflow(f, strict)
 			if err != nil {
 				_ = f.Close()
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					return nil, fmt.Errorf("unable to read workflow '%s': file is empty: %w", wf.workflowDirEntry.Name(), err)
 				}
 				return nil, fmt.Errorf("workflow is not valid. '%s': %w", wf.workflowDirEntry.Name(), err)
@@ -146,7 +147,7 @@ func NewWorkflowPlanner(path string, noWorkflowRecurse, strict bool) (WorkflowPl
 			err = validateJobName(workflow)
 			if err != nil {
 				_ = f.Close()
-				return nil, err
+				return nil, markWorkflowDefinitionError(err)
 			}
 
 			wp.workflows = append(wp.workflows, workflow)
@@ -158,24 +159,38 @@ func NewWorkflowPlanner(path string, noWorkflowRecurse, strict bool) (WorkflowPl
 }
 
 func NewSingleWorkflowPlanner(name string, f io.Reader) (WorkflowPlanner, error) {
+	return newSingleWorkflowPlanner(name, name, func() (*Workflow, error) {
+		return ReadWorkflow(f, false)
+	})
+}
+
+// NewSingleWorkflowPlannerFromContent plans one immutable in-memory Workflow.
+// Parse and validation failures are marked as definition errors.
+func NewSingleWorkflowPlannerFromContent(name string, content []byte, strict bool) (WorkflowPlanner, error) {
+	return newSingleWorkflowPlanner(name, filepath.Base(name), func() (*Workflow, error) {
+		return ReadWorkflowContent(content, strict)
+	})
+}
+
+func newSingleWorkflowPlanner(name, defaultName string, readWorkflow func() (*Workflow, error)) (WorkflowPlanner, error) {
 	wp := new(workflowPlanner)
 
 	log.Debugf("Reading workflow %s", name)
-	workflow, err := ReadWorkflow(f, false)
+	workflow, err := readWorkflow()
 	if err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("unable to read workflow '%s': file is empty: %w", name, err)
 		}
 		return nil, fmt.Errorf("workflow is not valid. '%s': %w", name, err)
 	}
 	workflow.File = name
 	if workflow.Name == "" {
-		workflow.Name = name
+		workflow.Name = defaultName
 	}
 
 	err = validateJobName(workflow)
 	if err != nil {
-		return nil, err
+		return nil, markWorkflowDefinitionError(err)
 	}
 
 	wp.workflows = append(wp.workflows, workflow)
@@ -233,7 +248,7 @@ func (wp *workflowPlanner) planEvent(eventName string, mergeGroupBaseBranch *str
 				if mergeGroupBaseBranch != nil {
 					selected, err := w.mergeGroupEventSelected(*mergeGroupBaseBranch)
 					if err != nil {
-						lastErr = err
+						lastErr = markWorkflowDefinitionError(err)
 						continue
 					}
 					if !selected {
@@ -243,7 +258,7 @@ func (wp *workflowPlanner) planEvent(eventName string, mergeGroupBaseBranch *str
 				stages, err := createStages(w, w.GetJobIDs()...)
 				if err != nil {
 					log.Warn(err)
-					lastErr = err
+					lastErr = markWorkflowDefinitionError(err)
 				} else {
 					plan.mergeStages(stages)
 				}
@@ -265,7 +280,7 @@ func (wp *workflowPlanner) PlanJob(jobName string) (*Plan, error) {
 		stages, err := createStages(w, jobName)
 		if err != nil {
 			log.Warn(err)
-			lastErr = err
+			lastErr = markWorkflowDefinitionError(err)
 		} else {
 			plan.mergeStages(stages)
 		}
@@ -286,7 +301,7 @@ func (wp *workflowPlanner) PlanAll() (*Plan, error) {
 		stages, err := createStages(w, w.GetJobIDs()...)
 		if err != nil {
 			log.Warn(err)
-			lastErr = err
+			lastErr = markWorkflowDefinitionError(err)
 		} else {
 			plan.mergeStages(stages)
 		}

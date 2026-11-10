@@ -124,7 +124,11 @@ func newReusableWorkflowExecutor(rc *RunContext, directory string, workflow stri
 		if err != nil {
 			return err
 		}
-		planner, err := model.NewWorkflowPlanner(workflowPath, true, false)
+		content, err := os.ReadFile(workflowPath)
+		if err != nil {
+			return err
+		}
+		planner, err := model.NewSingleWorkflowPlannerFromContent(workflowPath, content, false)
 		if err != nil {
 			return err
 		}

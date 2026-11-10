@@ -268,6 +268,43 @@ jobs:
 	assert.Zero(t, dispatchCalls)
 }
 
+func TestLocalReusableWorkflowDefinitionError(t *testing.T) {
+	directory := t.TempDir()
+	assert.NoError(t, os.MkdirAll(filepath.Join(directory, ".github", "workflows"), 0o700))
+	caller := []byte(`name: caller
+on: push
+jobs:
+  call:
+    uses: ./.github/workflows/called.yml
+`)
+	called := []byte("jobs: [")
+	callerPath := filepath.Join(directory, "caller.yml")
+	assert.NoError(t, os.WriteFile(callerPath, caller, 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(directory, ".github", "workflows", "called.yml"), called, 0o600))
+	planner, err := model.NewSingleWorkflowPlannerFromContent(callerPath, caller, false)
+	assert.NoError(t, err)
+	plan, err := planner.PlanEvent("push")
+	assert.NoError(t, err)
+
+	dispatchCalls := 0
+	runner, err := New(&Config{
+		Workdir: directory, EventName: "push", GitHubInstance: "github.com", RemoteName: "origin",
+		Env: map[string]string{
+			"GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF": "refs/heads/dev", "SHA_REF": "0123456789abcdef0123456789abcdef01234567",
+		},
+		JobDispatcher: JobDispatcherFunc(func(context.Context, *RunContext) (JobResult, error) {
+			dispatchCalls++
+			return JobResult{Conclusion: JobConclusionSuccess}, nil
+		}),
+	})
+	assert.NoError(t, err)
+
+	err = runner.NewPlanExecutor(plan)(t.Context())
+
+	assert.ErrorIs(t, err, model.ErrInvalidWorkflowDefinition)
+	assert.Zero(t, dispatchCalls)
+}
+
 func TestJobDispatcherPreservesDeploymentEnvironment(t *testing.T) {
 	workflow, err := model.ReadWorkflow(strings.NewReader(`name: environment
 on: push
